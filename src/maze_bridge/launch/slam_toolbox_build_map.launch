@@ -1,0 +1,112 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Pose-graph mapping launch used by build_map.sh.  GMapping remains in
+       gmapping_build_map.launch only as a manual fallback. -->
+  <arg name="show_rviz" default="true"/>
+  <arg name="use_camera" default="false"/>
+  <arg name="port" default="/dev/serial/by-path/pci-0000:80:14.0-usb-0:9.2:1.0-port0"/>
+  <arg name="baud" default="115200"/>
+  <arg name="max_v" default="0.18"/>
+  <arg name="wheel_diameter" default="0.20894"/>
+  <arg name="wheel_base" default="0.51375"/>
+  <arg name="ticks_per_rev" default="4096"/>
+  <arg name="left_encoder_sign" default="1"/>
+  <arg name="right_encoder_sign" default="1"/>
+  <arg name="angular_command_sign" default="-1"/>
+
+  <arg name="safety_enable" default="true"/>
+  <arg name="safety_stop_distance" default="0.15"/>
+  <arg name="safety_slow_distance" default="0.60"/>
+  <arg name="safety_rear_stop_distance" default="0.15"/>
+  <arg name="safety_prediction_time" default="0.60"/>
+  <arg name="safety_collision_padding" default="0.03"/>
+  <arg name="vehicle_front_x" default="0.3483"/>
+  <arg name="vehicle_rear_x" default="-0.1517"/>
+  <arg name="vehicle_half_width" default="0.24"/>
+
+  <arg name="laser_x" default="0.315"/>
+  <arg name="laser_y" default="0.0"/>
+  <arg name="laser_z" default="0.33"/>
+  <arg name="laser_yaw" default="0.0"/>
+  <arg name="camera_x" default="0.145"/>
+  <arg name="camera_y" default="0.0"/>
+  <arg name="camera_z" default="0.42"/>
+  <arg name="camera_yaw" default="0.0"/>
+  <arg name="camera_pitch" default="0.0"/>
+  <arg name="camera_roll" default="0.0"/>
+
+  <!-- STM32 communication and calibrated wheel odometry. -->
+  <node pkg="stm32_bridge" type="serial_bridge_node" name="serial_bridge"
+        output="screen" required="true">
+    <param name="port" value="$(arg port)"/>
+    <param name="baud" value="$(arg baud)"/>
+    <param name="max_v" value="$(arg max_v)"/>
+    <param name="max_w" value="0.60"/>
+    <param name="angular_command_sign" value="$(arg angular_command_sign)"/>
+    <param name="safety_enable" value="$(arg safety_enable)"/>
+    <param name="safety_stop_distance" value="$(arg safety_stop_distance)"/>
+    <param name="safety_slow_distance" value="$(arg safety_slow_distance)"/>
+    <param name="safety_scan_timeout" value="0.30"/>
+    <param name="safety_rear_stop_distance" value="$(arg safety_rear_stop_distance)"/>
+    <param name="safety_prediction_time" value="$(arg safety_prediction_time)"/>
+    <param name="safety_prediction_step" value="0.03"/>
+    <param name="safety_collision_padding" value="$(arg safety_collision_padding)"/>
+    <param name="navigation_allow_reverse" value="false"/>
+    <param name="joystick_reverse_max_speed" value="0.15"/>
+    <param name="vehicle_front_x" value="$(arg vehicle_front_x)"/>
+    <param name="vehicle_rear_x" value="$(arg vehicle_rear_x)"/>
+    <param name="vehicle_half_width" value="$(arg vehicle_half_width)"/>
+    <param name="vehicle_footprint_padding" value="0.02"/>
+    <param name="safety_half_width" value="0.27"/>
+    <param name="laser_x" value="$(arg laser_x)"/>
+    <param name="laser_y" value="$(arg laser_y)"/>
+    <param name="laser_yaw" value="$(arg laser_yaw)"/>
+  </node>
+
+  <node pkg="stm32_bridge" type="odom_publisher" name="odom_publisher"
+        output="screen" required="true">
+    <param name="wheel_diameter" value="$(arg wheel_diameter)"/>
+    <param name="wheel_base" value="$(arg wheel_base)"/>
+    <param name="ticks_per_rev" value="$(arg ticks_per_rev)"/>
+    <param name="left_encoder_sign" value="$(arg left_encoder_sign)"/>
+    <param name="right_encoder_sign" value="$(arg right_encoder_sign)"/>
+  </node>
+
+  <include file="$(find maze_bridge)/launch/lakibeam1_scan_view_usb.launch">
+    <arg name="show_rviz" value="false"/>
+  </include>
+
+  <!-- Remove echoes from the car itself before scans reach SLAM. -->
+  <node pkg="stm32_bridge" type="scan_self_filter_node" name="scan_self_filter"
+        output="screen" required="true">
+    <param name="input_topic" value="/scan_raw"/>
+    <param name="output_topic" value="/scan"/>
+    <param name="laser_x" value="$(arg laser_x)"/>
+    <param name="laser_y" value="$(arg laser_y)"/>
+    <param name="laser_yaw" value="$(arg laser_yaw)"/>
+    <param name="vehicle_front_x" value="$(arg vehicle_front_x)"/>
+    <param name="vehicle_rear_x" value="$(arg vehicle_rear_x)"/>
+    <param name="vehicle_half_width" value="$(arg vehicle_half_width)"/>
+    <param name="padding" value="0.02"/>
+  </node>
+
+  <include if="$(arg use_camera)" file="$(find maze_bridge)/launch/usb_cam.launch">
+    <arg name="show_image" value="false"/>
+  </include>
+
+  <node pkg="tf2_ros" type="static_transform_publisher" name="laser_tf"
+        args="$(arg laser_x) $(arg laser_y) $(arg laser_z) $(arg laser_yaw) 0 0 base_footprint laser"
+        required="true"/>
+  <node if="$(arg use_camera)" pkg="tf2_ros" type="static_transform_publisher"
+        name="camera_tf"
+        args="$(arg camera_x) $(arg camera_y) $(arg camera_z) $(arg camera_yaw) $(arg camera_pitch) $(arg camera_roll) base_footprint usb_cam"/>
+
+  <!-- Online asynchronous pose-graph SLAM with loop closure. -->
+  <node pkg="slam_toolbox" type="async_slam_toolbox_node" name="slam_toolbox"
+        output="screen" required="true">
+    <rosparam command="load" file="$(find maze_bridge)/launch/slam_toolbox_params.yaml"/>
+  </node>
+
+  <node if="$(arg show_rviz)" name="rviz" pkg="rviz" type="rviz"
+        args="-d $(find maze_bridge)/rviz/slam_toolbox_mapping.rviz" output="screen"/>
+</launch>

@@ -1,0 +1,378 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- ============================================
+       完整 ROS 导航栈启动文件
+       需要先安装: sudo apt-get install ros-noetic-gmapping
+       ros-noetic-amcl ros-noetic-map-server
+       ros-noetic-move-base ros-noetic-dwa-local-planner
+       ros-noetic-teb-local-planner
+       ros-noetic-robot-pose-ekf
+       ============================================ -->
+
+  <!-- 参数 -->
+  <arg name="mode" default="navigation"/>   <!-- explore 或 navigation -->
+  <!-- 旧地图生成于雷达时间戳修复之前，必须重建 v2 地图。 -->
+  <arg name="map_file" default="/home/hyj/xiaoche/maps/maze_map_v2.yaml"/>
+  <arg name="show_rviz" default="true"/>
+  <arg name="port" default="/dev/ttyUSB0"/>
+  <arg name="baud" default="115200"/>
+  <arg name="camera_device" default="/dev/video4"/>
+  <arg name="camera_frame_id" default="usb_cam"/>
+  <arg name="camera_info_url" default=""/>
+  <!-- 当 ROS +angular.z 实车却右转时使用 -1；架空车轮验证后再落地。 -->
+  <arg name="angular_command_sign" default="-1"/>
+  <arg name="safety_enable" default="true"/>
+  <arg name="safety_stop_distance" default="0.15"/>
+  <arg name="safety_slow_distance" default="0.60"/>
+  <arg name="safety_rear_stop_distance" default="0.15"/>
+  <arg name="safety_prediction_time" default="0.60"/>
+  <arg name="safety_collision_padding" default="0.03"/>
+  <arg name="vehicle_front_x" default="0.3483"/>
+  <arg name="vehicle_rear_x" default="-0.1517"/>
+  <arg name="vehicle_half_width" default="0.24"/>
+  <arg name="max_v" default="0.50"/>
+  <arg name="wheel_diameter" default="0.20894"/>
+  <!-- 物理轮中心距为0.425m；差速/滑移转向的里程计必须使用旋转实测得到的
+       有效轮距。驱动系统未更换，重新标定前保留原有效值0.51375m。 -->
+  <arg name="wheel_base" default="0.51375"/>
+  <arg name="ticks_per_rev" default="4096"/>
+  <arg name="laser_x" default="0.315"/>
+  <arg name="laser_y" default="0.0"/>
+  <arg name="laser_z" default="0.33"/>
+  <arg name="laser_yaw" default="0.0"/>
+  <!-- 摄像头安装在舵机上；当前测试阶段舵机保持机械中位，按固定相机发布静态TF。 -->
+  <arg name="camera_x" default="0.145"/>
+  <arg name="camera_y" default="0.0"/>
+  <arg name="camera_z" default="0.42"/>
+  <arg name="camera_yaw" default="0.0"/>
+  <arg name="camera_pitch" default="0.0"/>
+  <arg name="camera_roll" default="0.0"/>
+
+  <!-- 云台默认关闭：关闭时使用上面的固定相机静态 TF；打开时由
+       gimbal_bridge_node 独占发布 base_footprint -> camera_frame_id 动态 TF。 -->
+  <arg name="use_gimbal" default="false"/>
+  <arg name="gimbal_port" default="/dev/ttyUSB1"/>
+  <arg name="gimbal_baud" default="115200"/>
+  <arg name="gimbal_required" default="false"/>
+  <arg name="gimbal_auto_enable" default="false"/>
+  <arg name="gimbal_pan_to_ros_sign" default="1.0"/>
+  <arg name="gimbal_invert_target_x" default="true"/>
+  <arg name="gimbal_tilt_to_ros_sign" default="-1.0"/>
+
+  <!-- 普通导航默认不启用自主找蓝纸，避免一启动 launch 就自行运动。
+       enable_blue_autonomy=true 只启动状态机；auto_start=false 时仍需向
+       /blue_autonomy/enable 发布 true 才会开始。 -->
+  <arg name="enable_blue_autonomy" default="false"/>
+  <arg name="blue_auto_start" default="false"/>
+  <arg name="blue_start_delay" default="10.0"/>
+  <arg name="blue_search_enabled" default="true"/>
+  <arg name="blue_require_localization" default="true"/>
+  <arg name="blue_require_camera_info" default="false"/>
+  <!-- 比赛起点固定后，把一次人工定位得到的 map 坐标写到这三个参数，
+       才能在正式计时中一键启动而不依赖 RViz 2D Pose Estimate。 -->
+  <arg name="initial_pose_x" default="0.0"/>
+  <arg name="initial_pose_y" default="0.0"/>
+  <arg name="initial_pose_a" default="0.0"/>
+  <arg name="paper_height" default="0.297"/>
+  <arg name="fallback_hfov_deg" default="70.0"/>
+  <!-- 远距离蓝色 A4 检测：同时要求连续色块尺寸、A4近似长宽比和填充率。 -->
+  <arg name="blue_ratio_threshold" default="0.0003"/>
+  <arg name="blue_contour_ratio" default="0.00025"/>
+  <arg name="blue_fill_ratio" default="0.40"/>
+  <arg name="blue_min_pixel_width" default="8"/>
+  <arg name="blue_min_pixel_height" default="10"/>
+  <arg name="blue_min_aspect" default="0.25"/>
+  <arg name="blue_max_aspect" default="1.70"/>
+  <arg name="blue_confirm_frames" default="3"/>
+  <arg name="blue_clear_frames" default="6"/>
+  <arg name="blue_h_min" default="100"/>
+  <arg name="blue_h_max" default="130"/>
+  <arg name="blue_s_min" default="80"/>
+  <arg name="blue_v_min" default="80"/>
+  <arg name="blue_show_debug" default="false"/>
+  <!-- 黑色终点线视觉引导。蓝纸检测始终具有最高优先级；黑线只用于在
+       观测点延长云台水平扫描，失败后仍回退到全地图搜索。 -->
+  <arg name="black_line_enabled" default="true"/>
+  <arg name="black_v_max" default="70"/>
+  <arg name="black_roi_top" default="0.45"/>
+  <arg name="black_min_length_ratio" default="0.18"/>
+  <arg name="black_hough_threshold" default="40"/>
+  <arg name="black_max_line_gap" default="20"/>
+  <arg name="black_confirm_frames" default="4"/>
+  <arg name="black_clear_frames" default="6"/>
+  <arg name="line_guidance_enabled" default="true"/>
+  <arg name="waypoint_observation_time" default="3.0"/>
+  <arg name="line_scan_hold_time" default="10.0"/>
+  <arg name="line_retrigger_cooldown" default="12.0"/>
+  <arg name="black_line_timeout" default="0.6"/>
+  <arg name="approach_standoff" default="0.65"/>
+  <arg name="approach_clearance" default="0.46"/>
+  <arg name="search_spacing" default="1.50"/>
+  <arg name="search_clearance" default="0.50"/>
+
+  <!-- ============ 1. 硬件层 ============ -->
+
+  <!-- STM32 串口桥（默认模式=normal，只监听 /cmd_vel） -->
+  <node pkg="stm32_bridge" type="serial_bridge_node" name="serial_bridge" output="screen">
+    <param name="port" value="$(arg port)"/>
+    <param name="baud" value="$(arg baud)"/>
+    <param name="max_v" value="$(arg max_v)"/>
+    <param name="max_w" value="0.75"/>
+    <param name="angular_command_sign" value="$(arg angular_command_sign)"/>
+    <param name="safety_enable" value="$(arg safety_enable)"/>
+    <param name="safety_stop_distance" value="$(arg safety_stop_distance)"/>
+    <param name="safety_slow_distance" value="$(arg safety_slow_distance)"/>
+    <param name="safety_scan_timeout" value="0.30"/>
+    <param name="safety_rear_stop_distance" value="$(arg safety_rear_stop_distance)"/>
+    <param name="safety_prediction_time" value="$(arg safety_prediction_time)"/>
+    <param name="safety_prediction_step" value="0.03"/>
+    <param name="safety_collision_padding" value="$(arg safety_collision_padding)"/>
+    <param name="navigation_allow_reverse" value="false"/>
+    <param name="joystick_reverse_max_speed" value="0.15"/>
+    <param name="vehicle_front_x" value="$(arg vehicle_front_x)"/>
+    <param name="vehicle_rear_x" value="$(arg vehicle_rear_x)"/>
+    <param name="vehicle_half_width" value="$(arg vehicle_half_width)"/>
+    <param name="vehicle_footprint_padding" value="0.02"/>
+    <!-- 车体半宽0.24m，加3cm预测安全余量。原先按障碍到轮轴距离进行
+         圆形判断，会误禁实际扫不到障碍物的转弯。 -->
+    <param name="safety_half_width" value="0.27"/>
+    <param name="laser_x" value="$(arg laser_x)"/>
+    <param name="laser_y" value="$(arg laser_y)"/>
+    <param name="laser_yaw" value="$(arg laser_yaw)"/>
+  </node>
+
+  <!-- 里程计发布（由编码器计算 /odom + TF） -->
+  <node pkg="stm32_bridge" type="odom_publisher" name="odom_publisher" output="screen">
+    <param name="wheel_diameter" value="$(arg wheel_diameter)"/>
+    <param name="wheel_base" value="$(arg wheel_base)"/>
+    <param name="ticks_per_rev" value="$(arg ticks_per_rev)"/>
+  </node>
+
+  <!-- 雷达驱动 -->
+  <include file="$(find maze_bridge)/launch/lakibeam1_scan_view_usb.launch">
+    <arg name="show_rviz" value="false"/>
+  </include>
+
+  <!-- 与建图完全相同的车体自反射过滤，AMCL/代价地图只使用 /scan。 -->
+  <node pkg="stm32_bridge" type="scan_self_filter_node" name="scan_self_filter" output="screen">
+    <param name="input_topic" value="/scan_raw"/>
+    <param name="output_topic" value="/scan"/>
+    <param name="laser_x" value="$(arg laser_x)"/>
+    <param name="laser_y" value="$(arg laser_y)"/>
+    <param name="laser_yaw" value="$(arg laser_yaw)"/>
+    <param name="vehicle_front_x" value="$(arg vehicle_front_x)"/>
+    <param name="vehicle_rear_x" value="$(arg vehicle_rear_x)"/>
+    <param name="vehicle_half_width" value="$(arg vehicle_half_width)"/>
+    <param name="padding" value="0.02"/>
+  </node>
+
+  <!-- 摄像头 -->
+  <include file="$(find maze_bridge)/launch/usb_cam.launch">
+    <arg name="show_image" value="false"/>
+    <arg name="video_device" value="$(arg camera_device)"/>
+    <arg name="camera_frame_id" value="$(arg camera_frame_id)"/>
+    <arg name="camera_info_url" value="$(arg camera_info_url)"/>
+  </include>
+
+  <!-- 蓝色终点检测 -->
+  <node pkg="stm32_bridge" type="blue_detector" name="blue_detector" output="screen">
+    <param name="ratio_threshold" value="$(arg blue_ratio_threshold)"/>
+    <param name="min_contour_ratio" value="$(arg blue_contour_ratio)"/>
+    <param name="min_fill_ratio" value="$(arg blue_fill_ratio)"/>
+    <param name="min_pixel_width" value="$(arg blue_min_pixel_width)"/>
+    <param name="min_pixel_height" value="$(arg blue_min_pixel_height)"/>
+    <param name="min_aspect" value="$(arg blue_min_aspect)"/>
+    <param name="max_aspect" value="$(arg blue_max_aspect)"/>
+    <param name="confirm_frames" value="$(arg blue_confirm_frames)"/>
+    <param name="clear_frames" value="$(arg blue_clear_frames)"/>
+    <param name="h_min" value="$(arg blue_h_min)"/>
+    <param name="h_max" value="$(arg blue_h_max)"/>
+    <param name="s_min" value="$(arg blue_s_min)"/>
+    <param name="v_min" value="$(arg blue_v_min)"/>
+    <param name="show_debug" value="$(arg blue_show_debug)"/>
+    <param name="black_line_enabled" value="$(arg black_line_enabled)"/>
+    <param name="black_v_max" value="$(arg black_v_max)"/>
+    <param name="black_roi_top" value="$(arg black_roi_top)"/>
+    <param name="black_min_length_ratio" value="$(arg black_min_length_ratio)"/>
+    <param name="black_hough_threshold" value="$(arg black_hough_threshold)"/>
+    <param name="black_max_line_gap" value="$(arg black_max_line_gap)"/>
+    <param name="black_confirm_frames" value="$(arg black_confirm_frames)"/>
+    <param name="black_clear_frames" value="$(arg black_clear_frames)"/>
+  </node>
+
+  <!-- ============ 2. 机器人描述 (TF树) ============ -->
+
+  <!-- 发布静态 TF: base_footprint → laser -->
+  <node pkg="tf2_ros" type="static_transform_publisher" name="laser_tf"
+        args="$(arg laser_x) $(arg laser_y) $(arg laser_z) $(arg laser_yaw) 0 0 base_footprint laser"
+        required="true"/>
+
+  <!-- 固定相机与云台动态相机不能同时发布同一 child frame。 -->
+  <node unless="$(arg use_gimbal)" pkg="tf2_ros" type="static_transform_publisher"
+        name="camera_tf"
+        args="$(arg camera_x) $(arg camera_y) $(arg camera_z) $(arg camera_yaw) $(arg camera_pitch) $(arg camera_roll) base_footprint $(arg camera_frame_id)"/>
+
+  <node if="$(arg use_gimbal)" pkg="stm32_bridge" type="gimbal_bridge_node"
+        name="gimbal_bridge" output="screen">
+    <param name="port" value="$(arg gimbal_port)"/>
+    <param name="baud" value="$(arg gimbal_baud)"/>
+    <param name="required" value="$(arg gimbal_required)"/>
+    <param name="auto_enable" value="$(arg gimbal_auto_enable)"/>
+    <param name="center_on_connect" value="true"/>
+    <param name="publish_camera_tf" value="true"/>
+    <param name="base_frame" value="base_footprint"/>
+    <param name="camera_frame" value="$(arg camera_frame_id)"/>
+    <param name="camera_x" value="$(arg camera_x)"/>
+    <param name="camera_y" value="$(arg camera_y)"/>
+    <param name="camera_z" value="$(arg camera_z)"/>
+    <param name="camera_roll" value="$(arg camera_roll)"/>
+    <param name="camera_pitch_offset" value="$(arg camera_pitch)"/>
+    <param name="camera_yaw_offset" value="$(arg camera_yaw)"/>
+    <param name="pan_to_ros_sign" value="$(arg gimbal_pan_to_ros_sign)"/>
+    <param name="invert_target_x" value="$(arg gimbal_invert_target_x)"/>
+    <param name="tilt_to_ros_sign" value="$(arg gimbal_tilt_to_ros_sign)"/>
+  </node>
+
+  <!-- ============ 3. 建图与导航层 ============ -->
+
+  <!-- 探索模式：Gmapping SLAM -->
+  <group if="$(eval arg('mode') == 'explore')">
+    <node pkg="gmapping" type="slam_gmapping" name="slam_gmapping" output="screen">
+      <param name="base_frame" value="base_footprint"/>
+      <param name="odom_frame" value="odom"/>
+      <param name="map_frame" value="map"/>
+      <param name="map_update_interval" value="1.0"/>
+      <param name="maxUrange" value="8.0"/>
+      <param name="maxRange" value="10.0"/>
+      <param name="sigma" value="0.05"/>
+      <param name="kernelSize" value="1"/>
+      <param name="lstep" value="0.05"/>
+      <param name="astep" value="0.05"/>
+      <param name="iterations" value="5"/>
+      <param name="lsigma" value="0.075"/>
+      <param name="ogain" value="3.0"/>
+      <param name="lskip" value="0"/>
+      <param name="srr" value="0.01"/>
+      <param name="srt" value="0.02"/>
+      <param name="str" value="0.01"/>
+      <param name="stt" value="0.02"/>
+      <param name="linearUpdate" value="0.05"/>
+      <param name="angularUpdate" value="0.03"/>
+      <param name="temporalUpdate" value="0.25"/>
+      <param name="resampleThreshold" value="0.5"/>
+      <param name="particles" value="50"/>
+      <param name="xmin" value="-10.0"/>
+      <param name="ymin" value="-10.0"/>
+      <param name="xmax" value="10.0"/>
+      <param name="ymax" value="10.0"/>
+      <param name="delta" value="0.05"/>
+      <param name="llsamplerange" value="0.01"/>
+      <param name="llsamplestep" value="0.01"/>
+      <param name="lasamplerange" value="0.005"/>
+      <param name="lasamplestep" value="0.005"/>
+      <remap from="scan" to="/scan"/>
+    </node>
+
+    <!-- 地图完成后手动调用 map_saver，避免 30 秒时自动覆盖为不完整地图。 -->
+  </group>
+
+  <!-- 导航模式：AMCL定位 + move_base -->
+  <group if="$(eval arg('mode') == 'navigation')">
+    <!-- AMCL 定位 -->
+    <node pkg="amcl" type="amcl" name="amcl" output="screen">
+      <param name="base_frame_id" value="base_footprint"/>
+      <param name="odom_frame_id" value="odom"/>
+      <param name="global_frame_id" value="map"/>
+      <param name="use_map_topic" value="true"/>
+      <param name="min_particles" value="100"/>
+      <param name="max_particles" value="500"/>
+      <param name="kld_err" value="0.05"/>
+      <param name="update_min_d" value="0.1"/>
+      <param name="update_min_a" value="0.05"/>
+      <param name="resample_interval" value="1"/>
+      <param name="transform_tolerance" value="0.3"/>
+      <param name="recovery_alpha_slow" value="0.0"/>
+      <param name="recovery_alpha_fast" value="0.0"/>
+      <param name="gui_publish_rate" value="10.0"/>
+      <param name="save_pose_rate" value="0.5"/>
+      <param name="initial_pose_x" value="$(arg initial_pose_x)"/>
+      <param name="initial_pose_y" value="$(arg initial_pose_y)"/>
+      <param name="initial_pose_a" value="$(arg initial_pose_a)"/>
+      <!-- 激光模型 -->
+      <param name="laser_min_range" value="0.1"/>
+      <param name="laser_max_range" value="10.0"/>
+      <param name="laser_model_type" value="likelihood_field"/>
+      <param name="laser_likelihood_max_dist" value="2.0"/>
+    </node>
+
+    <!-- move_base + DWA 局部规划 -->
+    <node pkg="move_base" type="move_base" name="move_base" output="screen">
+      <param name="base_global_planner" value="navfn/NavfnROS"/>
+      <param name="base_local_planner" value="dwa_local_planner/DWAPlannerROS"/>
+      <!-- 全局路径持续重算，不是只在接收目标点时计算一次。新增障碍进入
+           global_costmap 后，最迟约0.2秒开始生成绕行路径。 -->
+      <param name="controller_frequency" value="12.0"/>
+      <param name="planner_frequency" value="5.0"/>
+      <param name="controller_patience" value="5.0"/>
+      <param name="planner_patience" value="5.0"/>
+      <param name="oscillation_timeout" value="12.0"/>
+      <param name="oscillation_distance" value="0.05"/>
+      <param name="shutdown_costmaps" value="false"/>
+      <!-- 找不到轨迹时保持停车并报告失败，禁止自动原地转圈撞击。 -->
+      <param name="recovery_behavior_enabled" value="false"/>
+      <param name="clearing_rotation_allowed" value="false"/>
+      <!-- Navfn只在已知自由空间规划，并要求目标落在可行走区域。 -->
+      <param name="NavfnROS/allow_unknown" value="false"/>
+      <param name="NavfnROS/default_tolerance" value="0.05"/>
+
+      <!-- 全局代价地图 -->
+      <rosparam file="$(find maze_bridge)/launch/costmap_common_params.yaml" command="load" ns="global_costmap"/>
+      <rosparam file="$(find maze_bridge)/launch/costmap_common_params.yaml" command="load" ns="local_costmap"/>
+      <rosparam file="$(find maze_bridge)/launch/local_costmap_params.yaml" command="load"/>
+      <rosparam file="$(find maze_bridge)/launch/global_costmap_params.yaml" command="load"/>
+      <rosparam file="$(find maze_bridge)/launch/dwa_local_planner_params.yaml" command="load"/>
+    </node>
+
+    <!-- 加载地图 -->
+    <node pkg="map_server" type="map_server" name="map_server" 
+          args="$(arg map_file)"/>
+
+    <!-- 自动蓝纸任务只允许在 navigation 模式中启动。节点还会等待
+         move_base、地图、相机图像和满足阈值的 AMCL 定位。 -->
+    <group if="$(arg enable_blue_autonomy)">
+      <node pkg="maze_planner" type="blue_goal_navigator"
+            name="blue_goal_navigator" output="screen">
+        <param name="auto_start" value="$(arg blue_auto_start)"/>
+        <param name="start_delay" value="$(arg blue_start_delay)"/>
+        <param name="search_enabled" value="$(arg blue_search_enabled)"/>
+        <param name="require_localization" value="$(arg blue_require_localization)"/>
+        <!-- 只有启用云台且要求云台在线时，状态机才把云台作为启动条件。 -->
+        <param name="require_gimbal" value="$(arg gimbal_required)"/>
+        <param name="require_camera_info" value="$(arg blue_require_camera_info)"/>
+        <param name="map_frame" value="map"/>
+        <param name="base_frame" value="base_footprint"/>
+        <param name="camera_x" value="$(arg camera_x)"/>
+        <param name="camera_y" value="$(arg camera_y)"/>
+        <param name="paper_height" value="$(arg paper_height)"/>
+        <param name="fallback_hfov_deg" value="$(arg fallback_hfov_deg)"/>
+        <param name="approach_standoff" value="$(arg approach_standoff)"/>
+        <param name="approach_clearance" value="$(arg approach_clearance)"/>
+        <param name="search_spacing" value="$(arg search_spacing)"/>
+        <param name="search_clearance" value="$(arg search_clearance)"/>
+        <param name="line_guidance_enabled" value="$(arg line_guidance_enabled)"/>
+        <param name="waypoint_observation_time" value="$(arg waypoint_observation_time)"/>
+        <param name="line_scan_hold_time" value="$(arg line_scan_hold_time)"/>
+        <param name="line_retrigger_cooldown" value="$(arg line_retrigger_cooldown)"/>
+        <param name="black_line_timeout" value="$(arg black_line_timeout)"/>
+      </node>
+    </group>
+  </group>
+
+  <!-- 只打开本项目的 RViz，不再误用雷达驱动自带的 Fixed Frame=laser 配置。 -->
+  <node if="$(arg show_rviz)" name="navigation_rviz" pkg="rviz" type="rviz"
+        args="-d $(find maze_bridge)/rviz/gmapping.rviz" output="screen">
+    <!-- 即使 RViz Tool Properties 被误改成 /goal，也强制送给 move_base。 -->
+    <remap from="/goal" to="/move_base_simple/goal"/>
+  </node>
+
+</launch>

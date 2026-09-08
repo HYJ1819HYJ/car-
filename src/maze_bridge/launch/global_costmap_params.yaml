@@ -1,0 +1,24 @@
+# global_costmap_params.yaml
+
+global_costmap:
+  global_frame: map
+  robot_base_frame: base_footprint
+  transform_tolerance: 0.3
+  # 新增障碍进入雷达后约0.2秒内更新全局代价，并触发全局路径重算。
+  update_frequency: 5.0
+  publish_frequency: 3.0
+  # 保留新地图的2.5cm分辨率，不能在规划前再次降采样到5cm。
+  resolution: 0.025
+  rolling_window: false
+  always_send_full_costmap: true
+
+  # 全局规划保留足够的车体安全范围，但让非致命代价更快衰减。
+  # 这样空旷区域优先走短直线，不会被较远障碍推出很大的弧线。
+  inflation_layer:
+    inflation_radius: 0.42
+    cost_scaling_factor: 7.0
+
+  plugins:
+    - {name: static_layer, type: "costmap_2d::StaticLayer"}
+    - {name: obstacle_layer, type: "costmap_2d::ObstacleLayer"}
+    - {name: inflation_layer, type: "costmap_2d::InflationLayer"}

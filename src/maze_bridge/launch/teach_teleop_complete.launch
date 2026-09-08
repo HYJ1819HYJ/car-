@@ -1,0 +1,57 @@
+<launch>
+  <!-- ================================================================
+       一键启动：蓝牙手柄教学遥操作
+       
+       使用方法：
+         1. 先配对蓝牙手柄到树莓派/Jetson
+         2. 验证手柄设备: ls /dev/input/js0
+         3. 启动: roslaunch maze_bridge teach_teleop_complete.launch
+         4. 按住 L1 键 + 左摇杆控制小车走迷宫
+         5. 走完后轨迹自动保存到 ~/.ros/maze_teach.csv
+       
+       复现方法：
+         roslaunch maze_bridge teach_teleop_replay.launch
+       ================================================================ -->
+
+  <arg name="port"              default="/dev/ttyUSB0"/>
+  <arg name="front_stop_m"      default="0.35"/>
+  <arg name="record_path"       default="$(env HOME)/.ros/maze_teach.csv"/>
+  <arg name="joy_dev"           default="/dev/input/js0"/>
+  <arg name="use_camera"        default="false"/>
+  <arg name="show_rviz"         default="false"/>
+
+  <!-- 1) STM32 串口桥 -->
+  <node pkg="stm32_bridge" type="serial_bridge_node" name="serial_bridge" output="screen">
+    <param name="port"      value="$(arg port)"/>
+    <param name="baud"      value="115200"/>
+    <param name="tx_hz"     value="50.0"/>
+    <param name="timeout_ms" value="300"/>
+  </node>
+
+  <!-- 2) 激光雷达 -->
+  <include file="$(find maze_bridge)/launch/lakibeam1_scan_view_usb.launch"/>
+
+  <!-- 3) 摄像头（可选） -->
+  <include if="$(arg use_camera)" file="$(find maze_bridge)/launch/usb_cam.launch"/>
+
+  <!-- 4) 蓝牙手柄驱动 + 遥操作 -->
+  <include file="$(find maze_planner)/launch/joy_teleop.launch">
+    <arg name="joy_dev" value="$(arg joy_dev)"/>
+  </include>
+
+  <!-- 5) 教学记录节点 -->
+  <node pkg="maze_planner" type="teach_repeat_node" name="teach_repeat" output="screen">
+    <param name="mode"          value="record"/>
+    <param name="cmd_in_topic"  value="/cmd_vel_in"/>
+    <param name="cmd_out_topic" value="/cmd_vel"/>
+    <param name="scan_topic"    value="/scan"/>
+    <param name="record_path"   value="$(arg record_path)"/>
+    <param name="front_stop_m"  value="$(arg front_stop_m)"/>
+    <param name="safety_enable" value="true"/>
+    <param name="loop_hz"       value="20.0"/>
+  </node>
+
+  <!-- 6) Rviz 可视化（可选） -->
+  <node if="$(arg show_rviz)" name="rviz" pkg="rviz" type="rviz"
+        args="-d $(find lakibeam1)/rviz/lakibeam1_scan.rviz"/>
+</launch>

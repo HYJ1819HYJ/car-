@@ -1,0 +1,89 @@
+╔════════════════════════════════════════════════════════════════════════════╗
+║                    小车建图系统 - 快速启动指南                             ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+【问题症状】
+  ✗ RViz出现 "Failed to save" 错误
+  ✗ 无法保存地图文件
+  ✗ gmapping无法启动或地图不出现
+
+【快速修复 - 3步骤】
+
+1️⃣  准备环境
+   $ mkdir -p ~/.ros
+   $ chmod 777 ~/.ros
+
+2️⃣  编译项目
+   $ cd ~/xiaoche
+   $ catkin_make -j4
+
+3️⃣  启动建图（二选一）
+
+   方案A - 一键启动（推荐）:
+   $ ./build_map.sh
+
+   方案B - 手动启动:
+   $ source devel/setup.bash
+   $ roslaunch maze_bridge gmapping_build_map.launch
+
+【建图监控】
+
+实时查看地图发布:
+   $ rostopic hz /map
+
+检查雷达数据:
+   $ rostopic echo /scan | head -5
+
+查看所有节点:
+   $ rosnode list
+
+【文件位置】
+
+新增文件:
+  ✓ build_map.sh                    - 一键启动脚本
+  ✓ src/maze_bridge/launch/gmapping_build_map.launch  - 建图配置
+  ✓ src/maze_bridge/rviz/gmapping.rviz                 - RViz配置
+  ✓ 建图问题诊断和解决.md           - 详细文档
+
+已修改文件:
+  ✓ src/maze_bridge/launch/navigation_stack.launch     - 添加注释
+
+【地图保存位置】
+
+默认保存路径: ~/.ros/maze_map.yaml (以及 maze_map.pgm 图像文件)
+
+查看已保存的地图:
+   $ ls -lh ~/.ros/maze_map.*
+
+【常见问题排查】
+
+问题: RViz黑屏或无地图显示
+→ 解决: rostopic hz /map 检查地图发布
+
+问题: "Permission denied" 错误
+→ 解决: sudo usermod -a -G dialout $USER && newgrp dialout
+
+问题: 无法找到 /dev/ttyUSB0
+→ 解决: lsusb 检查硬件连接，然后重启udev
+
+问题: gmapping输出"nan"坐标
+→ 解决: 检查TF树 - rosrun tf view_frames
+
+【详细说明】
+
+完整文档: cat 建图问题诊断和解决.md
+
+【关键概念】
+
+map_saver: 监听 /map 话题并自动保存地图文件
+gmapping: 使用激光雷达进行实时SLAM建图
+RViz: 3D可视化工具，实时显示建图过程
+
+【下一步】
+
+建图成功后，可以使用保存的地图进行自主导航:
+   $ roslaunch maze_bridge navigation_stack.launch mode:=navigation
+
+╔════════════════════════════════════════════════════════════════════════════╗
+║              如问题仍未解决，请查看详细文档中的 "常见问题排查"            ║
+╚════════════════════════════════════════════════════════════════════════════╝

@@ -1,0 +1,127 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- 比赛专用入口。
+
+       警告：该文件默认会在 start_delay 秒后尝试自主运动。调试底盘、串口、
+       相机或云台时请使用 navigation_stack.launch（其默认不自动行驶），
+       或在命令行覆盖 auto_start:=false。 -->
+
+  <arg name="map_file" default="/home/hyj/xiaoche/maps/competition_map_v1.yaml"/>
+  <arg name="show_rviz" default="true"/>
+  <arg name="base_port" default="/dev/ttyUSB0"/>
+  <arg name="gimbal_port" default="/dev/ttyUSB1"/>
+  <arg name="camera_device" default="/dev/video4"/>
+  <arg name="camera_info_url" default=""/>
+  <!-- 地图中的固定比赛起点；必须在场地实测后覆盖，不能凭机械尺寸猜。 -->
+  <arg name="initial_pose_x" default="0.0"/>
+  <arg name="initial_pose_y" default="0.0"/>
+  <arg name="initial_pose_a" default="0.0"/>
+
+  <!-- 明确设置为 false 可先完成定位、图像和云台检查，再手动使能：
+       rostopic pub -1 /blue_autonomy/enable std_msgs/Bool "data: true" -->
+  <arg name="auto_start" default="true"/>
+  <arg name="start_delay" default="10.0"/>
+
+  <!-- 比赛配置使用云台；缺少第二路 USB-TTL 或舵机未就绪时禁止任务起步。 -->
+  <arg name="use_gimbal" default="true"/>
+  <arg name="require_gimbal" default="true"/>
+
+  <!-- 未标定时可用 70 度水平视场角作粗略测距；正式比赛应提供 camera_info_url
+       并把 require_camera_info 设为 true。 -->
+  <arg name="require_camera_info" default="false"/>
+  <arg name="fallback_hfov_deg" default="70.0"/>
+  <arg name="blue_ratio_threshold" default="0.0003"/>
+  <arg name="blue_contour_ratio" default="0.00025"/>
+  <arg name="blue_fill_ratio" default="0.40"/>
+  <arg name="blue_min_pixel_width" default="8"/>
+  <arg name="blue_min_pixel_height" default="10"/>
+  <arg name="blue_min_aspect" default="0.25"/>
+  <arg name="blue_max_aspect" default="1.70"/>
+  <arg name="blue_confirm_frames" default="3"/>
+  <arg name="blue_clear_frames" default="6"/>
+  <arg name="blue_h_min" default="100"/>
+  <arg name="blue_h_max" default="130"/>
+  <arg name="blue_s_min" default="80"/>
+  <arg name="blue_v_min" default="80"/>
+  <arg name="blue_show_debug" default="false"/>
+  <arg name="black_line_enabled" default="true"/>
+  <arg name="black_v_max" default="70"/>
+  <arg name="black_roi_top" default="0.45"/>
+  <arg name="black_min_length_ratio" default="0.18"/>
+  <arg name="black_hough_threshold" default="40"/>
+  <arg name="black_max_line_gap" default="20"/>
+  <arg name="black_confirm_frames" default="4"/>
+  <arg name="black_clear_frames" default="6"/>
+  <arg name="line_guidance_enabled" default="true"/>
+  <arg name="waypoint_observation_time" default="3.0"/>
+  <arg name="line_scan_hold_time" default="10.0"/>
+  <arg name="line_retrigger_cooldown" default="12.0"/>
+  <arg name="black_line_timeout" default="0.6"/>
+
+  <!-- 终点区实测后必须联动调整：接近点不能比独立前向急停允许的位置更近。 -->
+  <arg name="approach_standoff" default="0.65"/>
+  <arg name="approach_clearance" default="0.46"/>
+  <arg name="safety_stop_distance" default="0.15"/>
+  <arg name="safety_slow_distance" default="0.60"/>
+
+  <include file="$(find maze_bridge)/launch/navigation_stack.launch">
+    <arg name="mode" value="navigation"/>
+    <arg name="map_file" value="$(arg map_file)"/>
+    <arg name="show_rviz" value="$(arg show_rviz)"/>
+    <arg name="port" value="$(arg base_port)"/>
+    <arg name="camera_device" value="$(arg camera_device)"/>
+    <arg name="camera_info_url" value="$(arg camera_info_url)"/>
+    <arg name="initial_pose_x" value="$(arg initial_pose_x)"/>
+    <arg name="initial_pose_y" value="$(arg initial_pose_y)"/>
+    <arg name="initial_pose_a" value="$(arg initial_pose_a)"/>
+
+    <arg name="use_gimbal" value="$(arg use_gimbal)"/>
+    <arg name="gimbal_port" value="$(arg gimbal_port)"/>
+    <arg name="gimbal_required" value="$(arg require_gimbal)"/>
+    <arg name="gimbal_auto_enable" value="true"/>
+
+    <arg name="enable_blue_autonomy" value="true"/>
+    <arg name="blue_auto_start" value="$(arg auto_start)"/>
+    <arg name="blue_start_delay" value="$(arg start_delay)"/>
+    <arg name="blue_search_enabled" value="true"/>
+    <arg name="blue_require_localization" value="true"/>
+    <arg name="blue_require_camera_info" value="$(arg require_camera_info)"/>
+    <arg name="fallback_hfov_deg" value="$(arg fallback_hfov_deg)"/>
+    <arg name="blue_ratio_threshold" value="$(arg blue_ratio_threshold)"/>
+    <arg name="blue_contour_ratio" value="$(arg blue_contour_ratio)"/>
+    <arg name="blue_fill_ratio" value="$(arg blue_fill_ratio)"/>
+    <arg name="blue_min_pixel_width" value="$(arg blue_min_pixel_width)"/>
+    <arg name="blue_min_pixel_height" value="$(arg blue_min_pixel_height)"/>
+    <arg name="blue_min_aspect" value="$(arg blue_min_aspect)"/>
+    <arg name="blue_max_aspect" value="$(arg blue_max_aspect)"/>
+    <arg name="blue_confirm_frames" value="$(arg blue_confirm_frames)"/>
+    <arg name="blue_clear_frames" value="$(arg blue_clear_frames)"/>
+    <arg name="blue_h_min" value="$(arg blue_h_min)"/>
+    <arg name="blue_h_max" value="$(arg blue_h_max)"/>
+    <arg name="blue_s_min" value="$(arg blue_s_min)"/>
+    <arg name="blue_v_min" value="$(arg blue_v_min)"/>
+    <arg name="blue_show_debug" value="$(arg blue_show_debug)"/>
+    <arg name="black_line_enabled" value="$(arg black_line_enabled)"/>
+    <arg name="black_v_max" value="$(arg black_v_max)"/>
+    <arg name="black_roi_top" value="$(arg black_roi_top)"/>
+    <arg name="black_min_length_ratio" value="$(arg black_min_length_ratio)"/>
+    <arg name="black_hough_threshold" value="$(arg black_hough_threshold)"/>
+    <arg name="black_max_line_gap" value="$(arg black_max_line_gap)"/>
+    <arg name="black_confirm_frames" value="$(arg black_confirm_frames)"/>
+    <arg name="black_clear_frames" value="$(arg black_clear_frames)"/>
+    <arg name="line_guidance_enabled" value="$(arg line_guidance_enabled)"/>
+    <arg name="waypoint_observation_time" value="$(arg waypoint_observation_time)"/>
+    <arg name="line_scan_hold_time" value="$(arg line_scan_hold_time)"/>
+    <arg name="line_retrigger_cooldown" value="$(arg line_retrigger_cooldown)"/>
+    <arg name="black_line_timeout" value="$(arg black_line_timeout)"/>
+    <arg name="safety_stop_distance" value="$(arg safety_stop_distance)"/>
+    <arg name="safety_slow_distance" value="$(arg safety_slow_distance)"/>
+
+    <!-- A4 竖放高度 297 mm；最终接近距离仍远大于15 cm硬急停距离。 -->
+    <arg name="paper_height" value="0.297"/>
+    <arg name="approach_standoff" value="$(arg approach_standoff)"/>
+    <arg name="approach_clearance" value="$(arg approach_clearance)"/>
+    <arg name="search_spacing" value="1.50"/>
+    <arg name="search_clearance" value="0.50"/>
+  </include>
+</launch>

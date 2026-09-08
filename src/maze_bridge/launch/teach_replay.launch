@@ -1,0 +1,9 @@
+<launch>
+  <node pkg="maze_planner" type="teach_repeat_node" name="teach_repeat" output="screen">
+    <param name="mode" value="replay"/>
+    <param name="cmd_out_topic" value="/cmd_vel"/>
+    <param name="record_path" value="$(env HOME)/.ros/maze_teach.csv"/>
+    <param name="front_stop_m" value="0.35"/>
+    <param name="replay_speed_scale" value="1.0"/>
+  </node>
+</launch>

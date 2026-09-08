@@ -1,0 +1,88 @@
+<launch>
+  <arg name="maze_mode" default="explore"/>
+  <arg name="front_stop_m" default="0.35"/>
+  <arg name="side_open_m" default="0.45"/>
+  <!-- 推荐值：轮距约0.6m、轮径0.2m时的初始速度 -->
+  <arg name="explore_v_forward" default="0.20"/>
+  <arg name="replay_v_forward" default="0.18"/>
+  <arg name="w_turn" default="0.60"/>
+  <arg name="goal_ratio_threshold" default="0.08"/>
+  <arg name="path_file" default="$(env HOME)/.ros/maze_path.txt"/>
+  <arg name="use_shortest_path" default="true"/>
+  <!-- 转弯持续周期数：越大转角越大。以20Hz为例，12约0.6s -->
+  <arg name="turn_ticks_need" default="12"/>
+  <!-- 1) STM32 串口桥 -->
+  <node pkg="stm32_bridge" type="serial_bridge_node" name="serial_bridge" output="screen">
+    <param name="port" value="/dev/ttyUSB0"/>
+    <param name="baud" value="115200"/>
+    <param name="max_v" value="0.18"/>
+    <param name="max_w" value="0.60"/>
+    <param name="angular_command_sign" value="-1"/>
+    <param name="safety_enable" value="true"/>
+    <param name="safety_stop_distance" value="0.15"/>
+    <param name="safety_slow_distance" value="0.60"/>
+    <param name="safety_scan_timeout" value="0.30"/>
+    <param name="safety_rear_stop_distance" value="0.15"/>
+    <param name="safety_prediction_time" value="0.60"/>
+    <param name="safety_prediction_step" value="0.03"/>
+    <param name="safety_collision_padding" value="0.03"/>
+    <param name="navigation_allow_reverse" value="false"/>
+    <param name="joystick_reverse_max_speed" value="0.15"/>
+    <param name="vehicle_front_x" value="0.3483"/>
+    <param name="vehicle_rear_x" value="-0.1517"/>
+    <param name="vehicle_half_width" value="0.24"/>
+    <param name="vehicle_footprint_padding" value="0.02"/>
+    <param name="safety_half_width" value="0.27"/>
+    <param name="laser_x" value="0.315"/>
+  </node>
+
+  <!-- 2) 雷达驱动 -->
+  <include file="$(find maze_bridge)/launch/lakibeam1_scan_view_usb.launch">
+    <arg name="show_rviz" value="false"/>
+  </include>
+
+  <!-- 3) 摄像头 -->
+  <include file="$(find maze_bridge)/launch/usb_cam.launch">
+    <arg name="show_image" value="false"/>
+  </include>
+
+  <!-- 4) 迷宫控制（探索/复现） -->
+  <include if="$(eval arg('maze_mode') == 'explore')" file="$(find maze_bridge)/launch/maze_explore.launch">
+    <arg name="front_stop_m" value="$(arg front_stop_m)"/>
+    <arg name="side_open_m" value="$(arg side_open_m)"/>
+    <arg name="v_forward" value="$(arg explore_v_forward)"/>
+    <arg name="w_turn" value="$(arg w_turn)"/>
+    <arg name="goal_ratio_threshold" value="$(arg goal_ratio_threshold)"/>
+    <arg name="path_file" value="$(arg path_file)"/>
+    <arg name="use_shortest_path" value="$(arg use_shortest_path)"/>
+    <arg name="turn_ticks_need" value="$(arg turn_ticks_need)"/>
+  </include>
+  <include if="$(eval arg('maze_mode') == 'replay')" file="$(find maze_bridge)/launch/maze_replay.launch">
+    <arg name="front_stop_m" value="$(arg front_stop_m)"/>
+    <arg name="side_open_m" value="$(arg side_open_m)"/>
+    <arg name="v_forward" value="$(arg replay_v_forward)"/>
+    <arg name="w_turn" value="$(arg w_turn)"/>
+    <arg name="goal_ratio_threshold" value="$(arg goal_ratio_threshold)"/>
+    <arg name="path_file" value="$(arg path_file)"/>
+    <arg name="use_shortest_path" value="$(arg use_shortest_path)"/>
+    <arg name="turn_ticks_need" value="$(arg turn_ticks_need)"/>
+  </include>
+
+  <!-- ============================================================
+       模式 2: 蓝牙手柄教学遥操作 (推荐首次使用)
+       用蓝牙手柄手动控制小车走迷宫，记录轨迹后自动复现。
+
+       使用方法:
+         roslaunch maze_bridge teach_teleop_complete.launch   # 第一圈：手柄控制
+         roslaunch maze_bridge teach_teleop_replay.launch     # 第二圈：自动复现
+       ============================================================ -->
+  <!--
+  <include file="$(find maze_bridge)/launch/teach_teleop_complete.launch"/>
+  -->
+
+  <!-- ============================================================
+       模式 3: 教学记录/复现 (旧版)
+       ============================================================ -->
+  <!-- <include file="$(find maze_bridge)/launch/teach_record.launch"/> -->
+  <!-- <include file="$(find maze_bridge)/launch/teach_replay.launch"/> -->
+</launch>

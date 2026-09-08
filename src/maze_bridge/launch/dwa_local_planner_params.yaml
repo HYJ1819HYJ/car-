@@ -1,0 +1,63 @@
+# dwa_local_planner_params.yaml
+
+DWAPlannerROS:
+  # 加速度限制
+  acc_lim_x: 0.50
+  acc_lim_y: 0.0       # 差速小车 Y方向不能移动
+  acc_lim_theta: 1.5
+  acc_lim_trans: 0.45
+
+  # 速度限制
+  max_vel_x: 0.50
+  # 禁止自主倒车。雷达虽为360度，但车体遮挡和近场盲区使倒车恢复无法
+  # 保证安全；遇到新增障碍应重新规划前进轨迹或原地安全转向。
+  min_vel_x: 0.0
+  max_vel_y: 0.0
+  min_vel_y: 0.0
+  max_vel_theta: 0.75
+  # 允许小角速度微调，避免轻微航向误差也必须画较大的圆弧。
+  min_vel_theta: 0.05
+  min_vel_trans: 0.0
+  max_vel_trans: 0.50
+
+  # 目标容差
+  xy_goal_tolerance: 0.12
+  yaw_goal_tolerance: 0.12
+  trans_stopped_vel: 0.05
+  theta_stopped_vel: 0.05
+
+  # 前向仿真
+  # DWA每条样本在整个sim_time内只能保持同一组(v,w)，它不能在单条样本里
+  # 表达“先直行、再转弯”。紧凑直角弯使用1.2秒短预测段，配合12Hz重算，
+  # 才能逐段完成直行接近、减速、转向；完整车体轨迹仍会做硬碰撞检查。
+  sim_time: 1.2
+  sim_granularity: 0.025
+  angular_sim_granularity: 0.015
+  vx_samples: 30
+  vy_samples: 1
+  vth_samples: 60
+
+  # 代价权重
+  # 允许为绕开临时行人适度偏离原全局线，同时保持向目标推进。
+  # footprint负责硬碰撞，occdist负责在多条可行轨迹中选择更安全的一条。
+  path_distance_bias: 40.0
+  goal_distance_bias: 16.0
+  occdist_scale: 0.10
+  forward_point_distance: 0.24
+  twirling_scale: 0.0
+  oscillation_reset_dist: 0.05
+  oscillation_reset_angle: 0.20
+
+  # 停止缓冲
+  stop_time_buffer: 0.50
+  scaling_speed: 0.12
+  max_scaling_factor: 0.20
+  prune_plan: true
+  penalize_negative_x: true
+  restore_defaults: false
+
+  # 恢复行为
+  use_dwa: true
+  publish_traj_pc: true
+  publish_cost_grid_pc: true
+  global_frame_id: odom

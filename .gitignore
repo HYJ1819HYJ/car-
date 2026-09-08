@@ -1,0 +1,31 @@
+# Catkin build output
+/build/
+/devel/
+/install/
+/log/
+/logs/
+
+# ROS runtime output
+*.bag
+*.bag.active
+*.posegraph
+.ros/
+
+# Python/cache/editor files
+__pycache__/
+*.py[cod]
+.vscode/
+.idea/
+*~
+*.bak
+*.swp
+
+# Native build artifacts
+*.o
+*.so
+*.a
+CMakeFiles/
+CMakeCache.txt
+
+# Local device/calibration overrides
+*.local.yaml

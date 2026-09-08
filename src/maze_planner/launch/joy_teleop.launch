@@ -1,0 +1,43 @@
+<launch>
+  <arg name="joy_dev" default="/dev/input/js0"/>
+
+  <!-- 蓝牙手柄驱动：将手柄物理输入发布为 /joy 消息 -->
+  <!-- 需要先安装: sudo apt install ros-noetic-joy -->
+  <!-- 需要先配对蓝牙手柄，使 /dev/input/js0 出现 -->
+  <node pkg="joy" type="joy_node" name="joy_node" output="screen">
+    <param name="dev" value="$(arg joy_dev)"/>
+    <param name="autorepeat_rate" value="20.0"/>
+    <param name="deadzone" value="0.05"/>
+  </node>
+
+  <!-- 手柄转速度指令节点 -->
+  <node pkg="maze_planner" type="joy_teleop.py" name="joy_teleop" output="screen">
+    <!-- 左摇杆: axis 1 = Y(前后), axis 0 = X(左右) -->
+    <param name="axis_linear" value="1"/>
+    <param name="axis_angular" value="0"/>
+    <param name="scale_linear" value="0.5"/>
+    <param name="scale_angular" value="0.9"/>
+    <param name="deadzone" value="0.05"/>
+    <param name="cmd_topic" value="/cmd_vel_in"/>
+
+    <!-- PS4手柄布局参考: -->
+    <!-- 按钮: 0=✕, 1=○, 2=△, 3=□, 4=L1, 5=R1, 6=L2, 7=R2, 8=Share, 9=Options, 10=PS, 11=L3, 12=R3 -->
+    <!-- 轴: 0=左X, 1=左Y, 2=右X, 3=右Y, 4=L2, 5=R2 -->
+    <!-- 十字键(hat): 6=左右, 7=上下 -->
+
+    <!-- Xbox手柄布局参考: -->
+    <!-- 按钮: 0=A, 1=B, 2=X, 3=Y, 4=LB, 5=RB, 6=Back, 7=Start, 8=Guide, 9=L3, 10=R3 -->
+    <!-- 轴: 0=左X, 1=左Y, 2=LT, 3=右X, 4=右Y, 5=RT -->
+    <!-- 十字键(hat): 6=左右, 7=上下 -->
+
+    <!-- 使用 PS 按钮 (索引10) 作为死手柄关, 按住才发送指令 -->
+    <!-- <param name="button_deadman" value="10"/> -->
+    <!-- 或者使用 L1 按钮 (索引4) -->
+    <param name="button_deadman" value="4"/>
+
+    <!-- R2 扳机作为速度倍率 (左扳机减速, 右扳机加速) -->
+    <param name="axis_speed_scale" value="5"/>
+    <param name="speed_scale_min" value="0.3"/>
+    <param name="speed_scale_max" value="1.0"/>
+  </node>
+</launch>

@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+
+<launch>
+  <arg name="show_rviz" default="true"/>
+  <!-- 当前 LakiBeam 有线网卡实际地址。需要更换雷达时可在命令行覆盖。 -->
+  <arg name="hostip" default="192.168.198.1"/>
+  <arg name="sensorip" default="192.168.198.2"/>
+
+  <node name="richbeam_lidar" pkg="lakibeam1" type="lakibeam1_scan_node" output="screen">
+    <!-- 保留原始雷达话题；车体自反射由上层 scan_self_filter 统一去除。 -->
+    <remap from="/richbeam_lidar/scan" to="/scan_raw" />
+    <param name="frame_id" type="string" value="laser"/>
+    <param name="output_topic" type="string" value="scan" />
+    <param name="inverted" type="bool" value="false"/>
+    <param name="hostip" type="string" value="$(arg hostip)"/>
+    <param name="sensorip" type="string" value="$(arg sensorip)"/>
+    <param name="port" type="string" value="2368"/>
+    <param name="angle_offset" type="int" value="0"/>
+    <!-- Parameters are persisted in the lidar; avoid repeated HTTP writes on startup. -->
+    <param name="configure_sensor" type="bool" value="false"/>
+
+    <param name="scanfreq" type="string" value="30" />
+    <param name="filter" type="string" value="3" />
+    <param name="gain_factor" type="string" value="10" />
+    <param name="filter_threshold" type="string" value="170" />
+    <param name="laser_enable" type="string" value="true" />
+    <param name="scan_range_start" type="string" value="45" />
+    <param name="scan_range_stop" type="string" value="315" />
+  </node>
+  <node if="$(arg show_rviz)" name="lidar_rviz" pkg="rviz" type="rviz"
+        args="-d $(find lakibeam1)/rviz/lakibeam1_scan.rviz" />
+</launch>

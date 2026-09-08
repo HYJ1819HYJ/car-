@@ -1,0 +1,169 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- ============================================
+       旧版GMapping建图启动文件（仅作故障回退，不再推荐）
+       用法: roslaunch maze_bridge gmapping_build_map.launch
+       ============================================ -->
+
+  <!-- 参数 -->
+  <arg name="show_rviz" default="true"/>
+  <arg name="use_camera" default="false"/>
+  <arg name="port" default="/dev/ttyUSB0"/>
+  <arg name="baud" default="115200"/>
+  <!-- 建图手柄线速度上限；高速度会降低SLAM质量，驾驶时按需控制摇杆量。 -->
+  <arg name="max_v" default="0.18"/>
+  <arg name="wheel_diameter" default="0.20894"/>
+  <!-- 物理轮中心距为0.425m；里程计使用旋转实测的有效轮距，重新标定前
+       保留原值0.51375m。 -->
+  <arg name="wheel_base" default="0.51375"/>
+  <arg name="ticks_per_rev" default="4096"/>
+  <arg name="left_encoder_sign" default="1"/>
+  <arg name="right_encoder_sign" default="1"/>
+  <arg name="angular_command_sign" default="-1"/>
+  <arg name="safety_enable" default="true"/>
+  <arg name="safety_stop_distance" default="0.15"/>
+  <arg name="safety_slow_distance" default="0.60"/>
+  <arg name="safety_rear_stop_distance" default="0.15"/>
+  <arg name="safety_prediction_time" default="0.60"/>
+  <arg name="safety_collision_padding" default="0.03"/>
+  <arg name="vehicle_front_x" default="0.3483"/>
+  <arg name="vehicle_rear_x" default="-0.1517"/>
+  <arg name="vehicle_half_width" default="0.24"/>
+  <!-- 新车实测传感器安装位置，以驱动轮轴中心的地面投影为原点。 -->
+  <arg name="laser_x" default="0.315"/>
+  <arg name="laser_y" default="0.0"/>
+  <arg name="laser_z" default="0.33"/>
+  <arg name="laser_yaw" default="0.0"/>
+  <!-- 摄像头安装在舵机上；当前测试阶段舵机保持机械中位，按固定相机发布静态TF。 -->
+  <arg name="camera_x" default="0.145"/>
+  <arg name="camera_y" default="0.0"/>
+  <arg name="camera_z" default="0.42"/>
+  <arg name="camera_yaw" default="0.0"/>
+  <arg name="camera_pitch" default="0.0"/>
+  <arg name="camera_roll" default="0.0"/>
+
+  <!-- ============ 硬件层 ============ -->
+
+  <!-- STM32 串口桥 -->
+  <node pkg="stm32_bridge" type="serial_bridge_node" name="serial_bridge" output="screen">
+    <param name="port" value="$(arg port)"/>
+    <param name="baud" value="$(arg baud)"/>
+    <param name="max_v" value="$(arg max_v)"/>
+    <param name="max_w" value="0.60"/>
+    <param name="angular_command_sign" value="$(arg angular_command_sign)"/>
+    <param name="safety_enable" value="$(arg safety_enable)"/>
+    <param name="safety_stop_distance" value="$(arg safety_stop_distance)"/>
+    <param name="safety_slow_distance" value="$(arg safety_slow_distance)"/>
+    <param name="safety_scan_timeout" value="0.30"/>
+    <param name="safety_rear_stop_distance" value="$(arg safety_rear_stop_distance)"/>
+    <param name="safety_prediction_time" value="$(arg safety_prediction_time)"/>
+    <param name="safety_prediction_step" value="0.03"/>
+    <param name="safety_collision_padding" value="$(arg safety_collision_padding)"/>
+    <param name="navigation_allow_reverse" value="false"/>
+    <param name="joystick_reverse_max_speed" value="0.15"/>
+    <param name="vehicle_front_x" value="$(arg vehicle_front_x)"/>
+    <param name="vehicle_rear_x" value="$(arg vehicle_rear_x)"/>
+    <param name="vehicle_half_width" value="$(arg vehicle_half_width)"/>
+    <param name="vehicle_footprint_padding" value="0.02"/>
+    <param name="safety_half_width" value="0.27"/>
+    <param name="laser_x" value="$(arg laser_x)"/>
+    <param name="laser_y" value="$(arg laser_y)"/>
+    <param name="laser_yaw" value="$(arg laser_yaw)"/>
+  </node>
+
+  <!-- 里程计发布 -->
+  <node pkg="stm32_bridge" type="odom_publisher" name="odom_publisher" output="screen">
+    <param name="wheel_diameter" value="$(arg wheel_diameter)"/>
+    <param name="wheel_base" value="$(arg wheel_base)"/>
+    <param name="ticks_per_rev" value="$(arg ticks_per_rev)"/>
+    <param name="left_encoder_sign" value="$(arg left_encoder_sign)"/>
+    <param name="right_encoder_sign" value="$(arg right_encoder_sign)"/>
+  </node>
+
+  <!-- 雷达驱动 -->
+  <include file="$(find maze_bridge)/launch/lakibeam1_scan_view_usb.launch">
+    <arg name="show_rviz" value="false"/>
+  </include>
+
+  <!-- GMapping 不知道机器人 footprint。必须先删除车架/底盘反射，否则
+       保存的静态地图会把小车自身画成障碍，导航起步即处于碰撞状态。 -->
+  <node pkg="stm32_bridge" type="scan_self_filter_node" name="scan_self_filter" output="screen">
+    <param name="input_topic" value="/scan_raw"/>
+    <param name="output_topic" value="/scan"/>
+    <param name="laser_x" value="$(arg laser_x)"/>
+    <param name="laser_y" value="$(arg laser_y)"/>
+    <param name="laser_yaw" value="$(arg laser_yaw)"/>
+    <param name="vehicle_front_x" value="$(arg vehicle_front_x)"/>
+    <param name="vehicle_rear_x" value="$(arg vehicle_rear_x)"/>
+    <param name="vehicle_half_width" value="$(arg vehicle_half_width)"/>
+    <param name="padding" value="0.02"/>
+  </node>
+
+  <!-- 摄像头 -->
+  <include if="$(arg use_camera)" file="$(find maze_bridge)/launch/usb_cam.launch">
+    <arg name="show_image" value="false"/>
+  </include>
+
+  <!-- ============ TF树 ============ -->
+
+  <!-- 发布静态 TF: base_footprint → laser。
+       tf2_ros 发布到带锁存的 /tf_static；required 可避免 TF 死掉后系统仍
+       表面运行、实际上 gmapping 丢弃全部雷达消息。 -->
+  <node pkg="tf2_ros" type="static_transform_publisher" name="laser_tf"
+        args="$(arg laser_x) $(arg laser_y) $(arg laser_z) $(arg laser_yaw) 0 0 base_footprint laser"
+        required="true"/>
+
+  <!-- 发布静态 TF: base_footprint → camera -->
+  <node if="$(arg use_camera)" pkg="tf2_ros" type="static_transform_publisher" name="camera_tf"
+        args="$(arg camera_x) $(arg camera_y) $(arg camera_z) $(arg camera_yaw) $(arg camera_pitch) $(arg camera_roll) base_footprint usb_cam"/>
+
+  <!-- ============ SLAM建图 (GMapping) ============ -->
+
+  <node pkg="gmapping" type="slam_gmapping" name="slam_gmapping" output="screen">
+    <param name="base_frame" value="base_footprint"/>
+    <param name="odom_frame" value="odom"/>
+    <param name="map_frame" value="map"/>
+    <param name="map_update_interval" value="1.0"/>
+    <param name="maxUrange" value="8.0"/>
+    <param name="maxRange" value="10.0"/>
+    <param name="sigma" value="0.05"/>
+    <param name="kernelSize" value="1"/>
+    <!-- 差速/滑移底盘在转弯时会有明显轮滑。原扫描匹配搜索窗口过小，
+         一次打滑就可能把同一排板投成两条分叉墙。扩大搜索范围并细化优化。 -->
+    <param name="lstep" value="0.03"/>
+    <param name="astep" value="0.03"/>
+    <param name="iterations" value="8"/>
+    <param name="lsigma" value="0.075"/>
+    <param name="ogain" value="3.0"/>
+    <param name="lskip" value="0"/>
+    <!-- 适度降低对编码器里程计的盲目信任，让激光匹配有能力纠正转弯打滑。 -->
+    <param name="srr" value="0.03"/>
+    <param name="srt" value="0.05"/>
+    <param name="str" value="0.03"/>
+    <param name="stt" value="0.05"/>
+    <param name="linearUpdate" value="0.08"/>
+    <param name="angularUpdate" value="0.04"/>
+    <param name="temporalUpdate" value="0.40"/>
+    <param name="resampleThreshold" value="0.5"/>
+    <param name="particles" value="80"/>
+    <param name="xmin" value="-10.0"/>
+    <param name="ymin" value="-10.0"/>
+    <param name="xmax" value="10.0"/>
+    <param name="ymax" value="10.0"/>
+    <param name="delta" value="0.05"/>
+    <param name="llsamplerange" value="0.05"/>
+    <param name="llsamplestep" value="0.01"/>
+    <param name="lasamplerange" value="0.03"/>
+    <param name="lasamplestep" value="0.005"/>
+    <!-- 拒绝明显错误的激光匹配，避免错误位姿被继续累积成分岔地图。 -->
+    <param name="minimumScore" value="50.0"/>
+    <remap from="scan" to="/scan"/>
+  </node>
+
+  <!-- 地图完成后手动运行 map_saver，避免启动30秒就保存一张不完整地图。 -->
+
+  <!-- ============ RViz可视化 ============ -->
+  <node if="$(arg show_rviz)" name="rviz" pkg="rviz" type="rviz"
+        args="-d $(find maze_bridge)/rviz/gmapping.rviz" output="screen"/>
+
+</launch>

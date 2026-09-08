@@ -1,0 +1,55 @@
+<launch>
+  <!-- ============================================================
+       教学复现模式：自动重放第一圈手柄记录的轨迹
+       工作流程：
+         1. 启动 STM32 串口桥（连接下位机）
+         2. 启动激光雷达（用于安全避障）
+         3. 启动教学复现节点（从 CSV 读取记录，自动重放）
+         4. 可选的摄像头（用于观察）
+       ============================================================ -->
+
+  <!-- 可调参数 -->
+  <arg name="port"              default="/dev/ttyUSB0"/>
+  <arg name="front_stop_m"      default="0.35"/>
+  <arg name="record_path"       default="$(env HOME)/.ros/maze_teach.csv"/>
+  <arg name="replay_speed_scale" default="1.0"/>
+
+  <!-- 1) STM32 串口桥 -->
+  <node pkg="stm32_bridge" type="serial_bridge_node" name="serial_bridge" output="screen">
+    <param name="port"      value="$(arg port)"/>
+    <param name="baud"      value="115200"/>
+    <param name="tx_hz"     value="50.0"/>
+    <param name="timeout_ms" value="300"/>
+    <param name="tx_head1"  value="0xAA"/>
+    <param name="tx_head2"  value="0x55"/>
+    <param name="tx_tail"   value="0xCC"/>
+    <param name="rx_head1"  value="0xAA"/>
+    <param name="rx_head2"  value="0x55"/>
+    <param name="rx_tail1"  value="0x0D"/>
+    <param name="rx_tail2"  value="0x0A"/>
+  </node>
+
+  <!-- 2) 激光雷达（用于复现时的安全防撞） -->
+  <include file="$(find maze_bridge)/launch/lakibeam1_scan_view_usb.launch"/>
+
+  <!-- 3) 摄像头（可选） -->
+  <!-- <include file="$(find maze_bridge)/launch/usb_cam.launch"/> -->
+
+  <!-- 4) 教学复现节点：重放记录的速度指令，带激光雷达防撞 -->
+  <node pkg="maze_planner" type="teach_repeat_node" name="teach_repeat" output="screen">
+    <param name="mode"              value="replay"/>
+    <param name="cmd_out_topic"     value="/cmd_vel"/>
+    <param name="scan_topic"        value="/scan"/>
+    <param name="record_path"       value="$(arg record_path)"/>
+    <param name="front_stop_m"      value="$(arg front_stop_m)"/>
+    <param name="replay_speed_scale" value="$(arg replay_speed_scale)"/>
+    <param name="safety_enable"     value="true"/>
+    <param name="loop_hz"           value="20.0"/>
+  </node>
+
+  <rosparam param="/teach_teleop_replay_info">
+    mode: "teach_teleop_replay"
+    description: "复现：自动重放 $(arg record_path) 文件中的轨迹"
+    speed_scale: $(arg replay_speed_scale)
+  </rosparam>
+</launch>

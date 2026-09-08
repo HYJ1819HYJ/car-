@@ -1,0 +1,29 @@
+<launch>
+  <arg name="front_stop_m" default="0.35"/>
+  <arg name="side_open_m" default="0.45"/>
+  <arg name="v_forward" default="0.18"/>
+  <arg name="w_turn" default="0.9"/>
+  <arg name="goal_ratio_threshold" default="0.08"/>
+  <arg name="path_file" default="$(env HOME)/.ros/maze_path.txt"/>
+  <arg name="use_shortest_path" default="true"/>
+  <arg name="turn_ticks_need" default="12"/>
+
+  <node pkg="stm32_bridge" type="blue_detector" name="blue_detector" output="screen">
+    <param name="ratio_threshold" value="$(arg goal_ratio_threshold)"/>
+    <param name="confirm_frames" value="5"/>
+    <param name="clear_frames" value="3"/>
+  </node>
+
+  <node pkg="maze_planner" type="maze_controller_node" name="maze_controller" output="screen">
+    <param name="mode" value="explore"/>
+    <param name="front_stop_m" value="$(arg front_stop_m)"/>
+    <param name="side_open_m" value="$(arg side_open_m)"/>
+    <param name="v_forward" value="$(arg v_forward)"/>
+    <param name="w_turn" value="$(arg w_turn)"/>
+    <param name="enable_camera_goal" value="true"/>
+    <param name="goal_topic" value="/goal_detected"/>
+    <param name="path_file" value="$(arg path_file)"/>
+    <param name="use_shortest_path" value="$(arg use_shortest_path)"/>
+    <param name="turn_ticks_need" value="$(arg turn_ticks_need)"/>
+  </node>
+</launch>

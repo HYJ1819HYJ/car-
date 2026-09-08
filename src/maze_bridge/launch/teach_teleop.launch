@@ -1,0 +1,61 @@
+<launch>
+  <!-- ============================================================
+       教学遥操作模式：蓝牙手柄控制小车走第一圈，记录轨迹
+       工作流程：
+         1. 启动 STM32 串口桥（连接下位机）
+         2. 启动激光雷达
+         3. 启动 USB 摄像头（可选，用于观察）
+         4. 启动蓝牙手柄驱动 + 遥操作节点
+         5. 启动教学记录节点（记录手柄操作到 CSV 文件）
+       ============================================================ -->
+
+  <!-- 可调参数 -->
+  <arg name="port"          default="/dev/ttyUSB0"/>
+  <arg name="front_stop_m"  default="0.35"/>
+  <arg name="record_path"   default="$(env HOME)/.ros/maze_teach.csv"/>
+  <arg name="joy_dev"       default="/dev/input/js0"/>
+
+  <!-- 1) STM32 串口桥 -->
+  <node pkg="stm32_bridge" type="serial_bridge_node" name="serial_bridge" output="screen">
+    <param name="port"      value="$(arg port)"/>
+    <param name="baud"      value="115200"/>
+    <param name="tx_hz"     value="50.0"/>
+    <param name="timeout_ms" value="300"/>
+    <param name="tx_head1"  value="0xAA"/>
+    <param name="tx_head2"  value="0x55"/>
+    <param name="tx_tail"   value="0xCC"/>
+    <param name="rx_head1"  value="0xAA"/>
+    <param name="rx_head2"  value="0x55"/>
+    <param name="rx_tail1"  value="0x0D"/>
+    <param name="rx_tail2"  value="0x0A"/>
+  </node>
+
+  <!-- 2) 激光雷达 -->
+  <include file="$(find maze_bridge)/launch/lakibeam1_scan_view_usb.launch"/>
+
+  <!-- 3) USB 摄像头（可选，注释掉可关闭） -->
+  <!-- <include file="$(find maze_bridge)/launch/usb_cam.launch"/> -->
+
+  <!-- 4) 蓝牙手柄遥操作 -->
+  <include file="$(find maze_planner)/launch/joy_teleop.launch">
+    <arg name="joy_dev" value="$(arg joy_dev)"/>
+  </include>
+
+  <!-- 5) 教学记录节点：记录 /cmd_vel_in → 发布 /cmd_vel 到串口桥
+       同时带激光雷达防撞保护 -->
+  <node pkg="maze_planner" type="teach_repeat_node" name="teach_repeat" output="screen">
+    <param name="mode"          value="record"/>
+    <param name="cmd_in_topic"  value="/cmd_vel_in"/>
+    <param name="cmd_out_topic" value="/cmd_vel"/>
+    <param name="scan_topic"    value="/scan"/>
+    <param name="record_path"   value="$(arg record_path)"/>
+    <param name="front_stop_m"  value="$(arg front_stop_m)"/>
+    <param name="safety_enable" value="true"/>
+    <param name="loop_hz"       value="20.0"/>
+  </node>
+
+  <rosparam param="/teach_teleop_info">
+    mode: "teach_teleop"
+    description: "第一圈：蓝牙手柄控制，记录轨迹到 $(arg record_path)"
+  </rosparam>
+</launch>
