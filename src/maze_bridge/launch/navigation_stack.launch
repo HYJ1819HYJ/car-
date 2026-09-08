@@ -305,22 +305,34 @@
       <param name="laser_likelihood_max_dist" value="2.0"/>
     </node>
 
-    <!-- move_base + DWA 局部规划 -->
+    <!-- move_base + TEB 局部规划。TEB可以在一条轨迹中表达先接近、再原地
+         转向、再前进，解决DWA在紧凑回头弯只能采样恒定圆弧而无解的问题。 -->
     <node pkg="move_base" type="move_base" name="move_base" output="screen">
       <param name="base_global_planner" value="navfn/NavfnROS"/>
-      <param name="base_local_planner" value="dwa_local_planner/DWAPlannerROS"/>
+      <param name="base_local_planner" value="teb_local_planner/TebLocalPlannerROS"/>
       <!-- 全局路径持续重算，不是只在接收目标点时计算一次。新增障碍进入
            global_costmap 后，最迟约0.2秒开始生成绕行路径。 -->
       <param name="controller_frequency" value="12.0"/>
       <param name="planner_frequency" value="5.0"/>
-      <param name="controller_patience" value="5.0"/>
-      <param name="planner_patience" value="5.0"/>
+      <!-- 动态障碍和紧凑弯口允许短时等待/重优化，不再5秒就永久放弃目标。 -->
+      <param name="controller_patience" value="15.0"/>
+      <param name="planner_patience" value="10.0"/>
       <param name="oscillation_timeout" value="12.0"/>
       <param name="oscillation_distance" value="0.05"/>
       <param name="shutdown_costmaps" value="false"/>
-      <!-- 找不到轨迹时保持停车并报告失败，禁止自动原地转圈撞击。 -->
-      <param name="recovery_behavior_enabled" value="false"/>
+      <!-- 仅允许清除雷达动态层中的陈旧障碍。禁止move_base默认的后退和
+           盲目旋转恢复；真实障碍会被下一帧雷达立即重新标记。 -->
+      <param name="recovery_behavior_enabled" value="true"/>
       <param name="clearing_rotation_allowed" value="false"/>
+      <rosparam param="recovery_behaviors">
+        - name: clear_dynamic_obstacles
+          type: clear_costmap_recovery/ClearCostmapRecovery
+      </rosparam>
+      <!-- reset_distance=0 清空整个 obstacle_layer；静态地图层不受影响，
+           下一帧雷达会重新标记真实障碍，串口安全层仍直接用实时雷达兜底。 -->
+      <param name="clear_dynamic_obstacles/reset_distance" value="0.0"/>
+      <param name="clear_dynamic_obstacles/affected_maps" value="both"/>
+      <rosparam param="clear_dynamic_obstacles/layer_names">[obstacle_layer]</rosparam>
       <!-- Navfn只在已知自由空间规划，并要求目标落在可行走区域。 -->
       <param name="NavfnROS/allow_unknown" value="false"/>
       <param name="NavfnROS/default_tolerance" value="0.05"/>
@@ -330,7 +342,7 @@
       <rosparam file="$(find maze_bridge)/launch/costmap_common_params.yaml" command="load" ns="local_costmap"/>
       <rosparam file="$(find maze_bridge)/launch/local_costmap_params.yaml" command="load"/>
       <rosparam file="$(find maze_bridge)/launch/global_costmap_params.yaml" command="load"/>
-      <rosparam file="$(find maze_bridge)/launch/dwa_local_planner_params.yaml" command="load"/>
+      <rosparam file="$(find maze_bridge)/launch/teb_local_planner_params.yaml" command="load"/>
     </node>
 
     <!-- 加载地图 -->

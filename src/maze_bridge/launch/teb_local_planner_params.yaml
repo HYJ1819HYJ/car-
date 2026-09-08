@@ -1,0 +1,104 @@
+# TEB local planner tuned for the 0.50 m x 0.48 m differential-drive chassis.
+#
+# DWA samples a constant (v,w) circular arc for each trajectory.  At a tight
+# 90/180-degree bend that representation can reject every sample even though a
+# sequence such as "approach, rotate, continue" is collision-free.  TEB
+# optimizes a time-varying trajectory and is therefore the default navigation
+# controller for this vehicle.
+
+TebLocalPlannerROS:
+  odom_topic: /odom
+  map_frame: odom
+
+  # Trajectory discretization.  0.10 s follows the 12 Hz controller closely;
+  # the 2.8 m horizon sees beyond the bend without pulling in the whole route.
+  teb_autosize: true
+  dt_ref: 0.10
+  dt_hysteresis: 0.03
+  global_plan_overwrite_orientation: true
+  allow_init_with_backwards_motion: false
+  max_global_plan_lookahead_dist: 2.8
+  global_plan_viapoint_sep: 0.18
+  via_points_ordered: true
+  feasibility_check_no_poses: 8
+  exact_arc_length: true
+  publish_feedback: true
+
+  # Differential-drive limits.  Autonomous reversing remains disabled both
+  # here and in serial_bridge's independent safety layer.
+  max_vel_x: 0.50
+  max_vel_x_backwards: 0.01
+  max_vel_y: 0.0
+  max_vel_theta: 0.75
+  acc_lim_x: 0.50
+  acc_lim_y: 0.0
+  acc_lim_theta: 1.50
+  min_turning_radius: 0.0
+  wheelbase: 0.0
+  cmd_angle_instead_rotvel: false
+  is_footprint_dynamic: false
+
+  xy_goal_tolerance: 0.12
+  yaw_goal_tolerance: 0.12
+  free_goal_vel: false
+
+  # TEB must use the same real asymmetric outline as both costmaps.  Distances
+  # below are additional clearances outside this polygon, not a replacement
+  # for the 48 cm body width.
+  footprint_model:
+    type: polygon
+    vertices: [[0.3483, 0.24], [0.3483, -0.24], [-0.1517, -0.24], [-0.1517, 0.24]]
+  min_obstacle_dist: 0.03
+  inflation_dist: 0.16
+  dynamic_obstacle_inflation_dist: 0.20
+  include_costmap_obstacles: true
+  include_dynamic_obstacles: false
+  costmap_obstacles_behind_robot_dist: 0.60
+  obstacle_poses_affected: 20
+  legacy_obstacle_association: false
+  obstacle_association_force_inclusion_factor: 2.0
+  obstacle_association_cutoff_factor: 8.0
+
+  no_inner_iterations: 6
+  no_outer_iterations: 5
+  optimization_activate: true
+  optimization_verbose: false
+  # Must stay below max_vel_x_backwards (TEB uses this margin inside bounds).
+  penalty_epsilon: 0.005
+  weight_max_vel_x: 2.0
+  weight_max_vel_theta: 1.0
+  weight_acc_lim_x: 1.0
+  weight_acc_lim_theta: 1.0
+  weight_kinematics_nh: 1000.0
+  weight_kinematics_forward_drive: 1000.0
+  weight_kinematics_turning_radius: 1.0
+  weight_optimaltime: 1.0
+  weight_shortest_path: 0.2
+  weight_obstacle: 70.0
+  weight_inflation: 0.2
+  weight_viapoint: 8.0
+  weight_adapt_factor: 2.0
+
+  # Evaluate alternate passages around newly added obstacles.  Limiting the
+  # number of classes keeps CPU usage bounded on the competition laptop.
+  enable_homotopy_class_planning: true
+  enable_multithreading: true
+  max_number_classes: 3
+  selection_cost_hysteresis: 1.0
+  selection_prefer_initial_plan: 0.90
+  selection_obst_cost_scale: 1.0
+  selection_viapoint_cost_scale: 1.0
+  selection_alternative_time_cost: false
+  roadmap_graph_no_samples: 12
+  roadmap_graph_area_width: 2.0
+  viapoints_all_candidates: true
+  visualize_hc_graph: false
+
+  # If optimization becomes temporarily infeasible at a corner, shorten and
+  # rebuild the forward horizon.  This never commands a reverse recovery.
+  shrink_horizon_backup: true
+  shrink_horizon_min_duration: 5.0
+  oscillation_recovery: true
+  oscillation_v_eps: 0.05
+  oscillation_omega_eps: 0.10
+  oscillation_recovery_min_duration: 5.0
