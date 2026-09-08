@@ -5,6 +5,8 @@
 
 set -e
 
+WORKSPACE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -47,7 +49,7 @@ else
 fi
 
 echo -e "\n${YELLOW}[第3步] 进入项目目录并编译${NC}"
-cd /home/hyj/xiaoche
+cd "$WORKSPACE_DIR"
 if [ -d "devel" ]; then
     echo -e "${GREEN}✓ 已编译过${NC}"
 else

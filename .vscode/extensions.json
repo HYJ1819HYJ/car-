@@ -1,0 +1,11 @@
+{
+  "recommendations": [
+    "ms-iot.vscode-ros",
+    "ms-vscode.cpptools",
+    "ms-vscode.cmake-tools",
+    "ms-python.python",
+    "redhat.vscode-xml",
+    "redhat.vscode-yaml",
+    "timonwong.shellcheck"
+  ]
+}

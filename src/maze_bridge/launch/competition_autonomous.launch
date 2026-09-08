@@ -6,7 +6,7 @@
        相机或云台时请使用 navigation_stack.launch（其默认不自动行驶），
        或在命令行覆盖 auto_start:=false。 -->
 
-  <arg name="map_file" default="/home/hyj/xiaoche/maps/competition_map_v1.yaml"/>
+  <arg name="map_file" default="$(find maze_bridge)/../../maps/competition_map_v3.yaml"/>
   <arg name="show_rviz" default="true"/>
   <arg name="base_port" default="/dev/ttyUSB0"/>
   <arg name="gimbal_port" default="/dev/ttyUSB1"/>

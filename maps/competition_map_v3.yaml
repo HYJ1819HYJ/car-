@@ -1,7 +1,6 @@
-image: /home/hyj/xiaoche/maps/competition_map_v3.pgm
+image: competition_map_v3.pgm
 resolution: 0.025000
 origin: [-0.997098, -2.990005, 0.000000]
 negate: 0
 occupied_thresh: 0.65
 free_thresh: 0.196
-

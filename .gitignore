@@ -4,6 +4,8 @@
 /install/
 /log/
 /logs/
+/.catkin_workspace
+/.catkin_tools/
 
 # ROS runtime output
 *.bag
@@ -14,7 +16,8 @@
 # Python/cache/editor files
 __pycache__/
 *.py[cod]
-.vscode/
+.vscode/*
+!.vscode/extensions.json
 .idea/
 *~
 *.bak

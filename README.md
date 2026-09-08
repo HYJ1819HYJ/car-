@@ -18,7 +18,19 @@
 - catkin
 - 外部雷达驱动工作空间：`LakiBeam_ws`（其厂商源码不在本仓库中）
 
-先安装工作空间声明的依赖：
+队友电脑建议直接执行一键安装：
+
+```bash
+sudo apt update && sudo apt install -y git
+git clone https://github.com/HYJ1819HYJ/car-.git ~/xiaoche
+cd ~/xiaoche
+chmod +x setup_ros_noetic.sh
+./setup_ros_noetic.sh
+```
+
+脚本仅支持 Ubuntu 20.04，会安装 ROS Noetic、导航/建图/相机/手柄依赖，编译工作空间并安装 VS Code 推荐扩展。Windows 用户只能在 WSL2 Ubuntu 20.04 中运行 `setup_ros_noetic.bat`；连接实车仍推荐原生 Ubuntu。
+
+详细说明见 [`队友环境安装说明.md`](队友环境安装说明.md)。手动安装与编译命令如下：
 
 ```bash
 cd ~/xiaoche
@@ -54,7 +66,7 @@ source ~/LakiBeam_ws/devel/setup.bash
 source ~/xiaoche/devel/setup.bash
 roslaunch maze_bridge navigation_stack.launch \
   mode:=navigation \
-  map_file:=/home/hyj/xiaoche/maps/competition_map_v3.yaml \
+  map_file:=$HOME/xiaoche/maps/competition_map_v3.yaml \
   port:=/dev/serial/by-path/你的底盘串口 \
   show_rviz:=true
 ```

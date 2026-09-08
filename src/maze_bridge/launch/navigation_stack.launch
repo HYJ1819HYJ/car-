@@ -12,7 +12,7 @@
   <!-- 参数 -->
   <arg name="mode" default="navigation"/>   <!-- explore 或 navigation -->
   <!-- 旧地图生成于雷达时间戳修复之前，必须重建 v2 地图。 -->
-  <arg name="map_file" default="/home/hyj/xiaoche/maps/maze_map_v2.yaml"/>
+  <arg name="map_file" default="$(find maze_bridge)/../../maps/competition_map_v3.yaml"/>
   <arg name="show_rviz" default="true"/>
   <arg name="port" default="/dev/ttyUSB0"/>
   <arg name="baud" default="115200"/>

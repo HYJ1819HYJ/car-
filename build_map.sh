@@ -8,6 +8,7 @@
 set -euo pipefail
 
 WORKSPACE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LAKIBEAM_WS="${LAKIBEAM_WS:-$HOME/LakiBeam_ws}"
 DEFAULT_BASE_PORT="/dev/serial/by-path/pci-0000:80:14.0-usb-0:9.2:1.0-port0"
 BASE_PORT="$DEFAULT_BASE_PORT"
 PORT_OVERRIDDEN=false
@@ -57,8 +58,8 @@ echo -e "\n${YELLOW}[1/5] 检查环境...${NC}"
 if [ -f /opt/ros/noetic/setup.bash ]; then
     source /opt/ros/noetic/setup.bash
 fi
-if [ -f /home/hyj/LakiBeam_ws/devel/setup.bash ]; then
-    source /home/hyj/LakiBeam_ws/devel/setup.bash
+if [ -f "$LAKIBEAM_WS/devel/setup.bash" ]; then
+    source "$LAKIBEAM_WS/devel/setup.bash"
 fi
 if [ -z "${ROS_DISTRO:-}" ]; then
     echo -e "${RED}❌ ROS未初始化，请运行: source /opt/ros/noetic/setup.bash${NC}"
