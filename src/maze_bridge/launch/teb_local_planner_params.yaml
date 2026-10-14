@@ -10,19 +10,19 @@ TebLocalPlannerROS:
   odom_topic: /odom
   map_frame: odom
 
-  # Trajectory discretization.  0.10 s follows the 12 Hz controller closely;
-  # the 2.8 m horizon sees beyond the bend without pulling in the whole route.
+  # At 0.10 m/s, a fine time grid and long horizon made control exceed the
+  # 0.5 s command timeout. This grid/horizon passed the 2026-10-07 isolated replay.
   teb_autosize: true
-  dt_ref: 0.10
-  dt_hysteresis: 0.03
+  dt_ref: 0.20
+  dt_hysteresis: 0.05
   global_plan_overwrite_orientation: true
   allow_init_with_backwards_motion: false
-  max_global_plan_lookahead_dist: 2.8
-  global_plan_viapoint_sep: 0.18
+  max_global_plan_lookahead_dist: 1.2
+  global_plan_viapoint_sep: 0.30
   via_points_ordered: true
   feasibility_check_no_poses: 8
   exact_arc_length: true
-  publish_feedback: true
+  publish_feedback: false
 
   # Differential-drive limits.  Autonomous reversing remains disabled both
   # here and in serial_bridge's independent safety layer.
@@ -48,8 +48,10 @@ TebLocalPlannerROS:
   footprint_model:
     type: polygon
     vertices: [[0.3483, 0.24], [0.3483, -0.24], [-0.1517, -0.24], [-0.1517, 0.24]]
-  min_obstacle_dist: 0.03
-  inflation_dist: 0.16
+  # Prefer at least 5 cm outside the real body, with a weaker preference
+  # extending to 10 cm. These are optimization penalties, not guarantees.
+  min_obstacle_dist: 0.05
+  inflation_dist: 0.10
   dynamic_obstacle_inflation_dist: 0.20
   include_costmap_obstacles: true
   include_dynamic_obstacles: false
@@ -59,31 +61,32 @@ TebLocalPlannerROS:
   obstacle_association_force_inclusion_factor: 2.0
   obstacle_association_cutoff_factor: 8.0
 
-  no_inner_iterations: 6
-  no_outer_iterations: 5
+  no_inner_iterations: 4
+  no_outer_iterations: 3
   optimization_activate: true
   optimization_verbose: false
   # Must stay below max_vel_x_backwards (TEB uses this margin inside bounds).
   penalty_epsilon: 0.005
   weight_max_vel_x: 2.0
-  weight_max_vel_theta: 1.0
+  weight_max_vel_theta: 5.0
   weight_acc_lim_x: 1.0
-  weight_acc_lim_theta: 1.0
+  weight_acc_lim_theta: 5.0
   weight_kinematics_nh: 1000.0
   weight_kinematics_forward_drive: 1000.0
   weight_kinematics_turning_radius: 1.0
   weight_optimaltime: 1.0
-  weight_shortest_path: 0.2
+  weight_shortest_path: 0.0
   weight_obstacle: 70.0
-  weight_inflation: 0.2
-  weight_viapoint: 8.0
+  weight_inflation: 1.0
+  # Allow a wider/smoother corner instead of pinning the body to via-points.
+  weight_viapoint: 1.0
   weight_adapt_factor: 2.0
 
-  # Evaluate alternate passages around newly added obstacles.  Limiting the
-  # number of classes keeps CPU usage bounded on the competition laptop.
-  enable_homotopy_class_planning: true
+  # Use a single TEB optimizer without building a homotopy graph.
+  # GlobalPlanner still replans around newly observed obstacles.
+  enable_homotopy_class_planning: false
   enable_multithreading: true
-  max_number_classes: 3
+  max_number_classes: 1
   selection_cost_hysteresis: 1.0
   selection_prefer_initial_plan: 0.90
   selection_obst_cost_scale: 1.0

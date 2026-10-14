@@ -32,3 +32,8 @@ CMakeCache.txt
 
 # Local device/calibration overrides
 *.local.yaml
+
+# Local debugging recordings and rollback snapshots
+/outputs/
+/peripheral_validation/
+/maps/*_before_*

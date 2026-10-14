@@ -1,0 +1,5 @@
+<library path="lib/libmaze_smooth_planner">
+  <class name="maze_smooth_planner/SmoothGlobalPlanner" type="maze_smooth_planner::SmoothGlobalPlanner" base_class_type="nav_core::BaseGlobalPlanner">
+    <description>Cost-aware grid search followed by footprint-checked tangent-continuous corner rounding.</description>
+  </class>
+</library>

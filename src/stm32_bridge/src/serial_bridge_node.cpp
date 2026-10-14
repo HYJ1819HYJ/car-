@@ -20,6 +20,7 @@
 #include <sstream>
 #include "stm32_bridge/protocol.hpp"
 #include "stm32_bridge/safety_geometry.hpp"
+#include "stm32_bridge/footprint_parameters.hpp"
 
 using stm32_bridge::ControlCmd;
 using stm32_bridge::ControlProtocol;
@@ -89,6 +90,25 @@ public:
     safety_collision_padding_ = std::max(0.0, safety_collision_padding_);
     joystick_reverse_max_speed_ = std::max(0.0, joystick_reverse_max_speed_);
 
+    SafetyFootprint body;
+    body.front=vehicle_front_x_;
+    body.rear=vehicle_rear_x_;
+    body.half_width=vehicle_half_width_;
+    if (!stm32_bridge::readFootprintParam(nh_,&body)) {
+      ros::shutdown();
+      return;
+    }
+    if (!body.vertices.empty()) {
+      vehicle_front_x_=body.front;
+      vehicle_rear_x_=body.rear;
+      vehicle_half_width_=body.half_width;
+      safety_half_width_=body.half_width+safety_collision_padding_;
+    }
+    self_filter_footprint_=body;
+    self_filter_footprint_.padding=vehicle_footprint_padding_;
+    collision_footprint_=body;
+    collision_footprint_.padding=safety_collision_padding_;
+
     fb_pub_  = nh_.advertise<std_msgs::String>("/stm32_feedback_text", 20);
     enc_pub_ = nh_.advertise<std_msgs::Int16MultiArray>("/wheel_encoder", 20);
     front_distance_pub_ = nh_.advertise<std_msgs::Float32>("/front_obstacle_distance", 10);
@@ -114,6 +134,9 @@ public:
     loop_timer_ = nh_.createTimer(ros::Duration(0.01), &SerialBridgeNode::mainLoop, this);
 
     ROS_INFO("=== SerialBridgeNode ===");
+    ROS_INFO("  Collision outline: %s, vertices=%zu",
+             body.vertices.empty()?"legacy rectangle":"convex polygon",
+             body.vertices.size());
     ROS_INFO("  Serial: %s @ %d", port_.c_str(), baud_);
     ROS_INFO("  Joystick: %s", joy_dev_.c_str());
     ROS_INFO("  Hold LB for joystick; release LB for /cmd_vel navigation");
@@ -211,10 +234,9 @@ private:
       // Lidar can see brackets/chassis inside the robot's own footprint.
       // Costmap footprint clearing removes those returns; the independent
       // rotation guard must do the same or it permanently blocks all turns.
-      const bool inside_robot =
-          x_base >= vehicle_rear_x_ - vehicle_footprint_padding_ &&
-          x_base <= vehicle_front_x_ + vehicle_footprint_padding_ &&
-          std::fabs(y_base) <= vehicle_half_width_ + vehicle_footprint_padding_;
+      const bool inside_robot = stm32_bridge::pointInsideFootprint(
+          SafetyPoint{x_base,y_base},SafetyPoint{0.0,0.0},0.0,
+          self_filter_footprint_);
       if (!inside_robot) {
         obstacles.push_back(SafetyPoint{x_base, y_base});
         obstacle_radius = std::min(obstacle_radius, std::hypot(x_base, y_base));
@@ -222,13 +244,12 @@ private:
         // edge, across the complete vehicle width.  Side obstacles do not
         // falsely block straight motion; curved motion is checked separately
         // by sweeping the complete footprint.
-        if (x_base >= vehicle_front_x_ &&
-            std::fabs(y_base) <= safety_half_width_) {
-          clearance = std::min(clearance, x_base - vehicle_front_x_);
-        }
-        if (x_base <= vehicle_rear_x_ &&
-            std::fabs(y_base) <= safety_half_width_) {
-          rear_clearance = std::min(rear_clearance, vehicle_rear_x_ - x_base);
+        if (std::fabs(y_base) <= safety_half_width_) {
+          double body_rear,body_front;
+          stm32_bridge::longitudinalBodyLimits(collision_footprint_,y_base,
+                                               &body_rear,&body_front);
+          if (x_base >= body_front) clearance=std::min(clearance,x_base-body_front);
+          if (x_base <= body_rear) rear_clearance=std::min(rear_clearance,body_rear-x_base);
         }
       }
     }
@@ -249,12 +270,7 @@ private:
   }
 
   bool trajectoryBlocked(const double v, const double w) const {
-    SafetyFootprint footprint;
-    footprint.front = vehicle_front_x_;
-    footprint.rear = vehicle_rear_x_;
-    footprint.half_width = vehicle_half_width_;
-    footprint.padding = safety_collision_padding_;
-    return trajectoryIntersects(obstacle_points_, footprint, v, w,
+    return trajectoryIntersects(obstacle_points_, collision_footprint_, v, w,
                                 safety_prediction_time_, safety_prediction_step_);
   }
 
@@ -321,9 +337,12 @@ private:
     // the same rear clearance and full-footprint trajectory check below.
     if (control_source == "cmd_vel" && v < -1e-3 && !navigation_allow_reverse_) {
       v = 0.0;
+      // Reject the complete planned twist. Keeping its angular component
+      // turns a rejected reverse arc into an unintended spin in place.
+      w = 0.0;
       safety_stopped = true;
       control_source += "+navigation_reverse_blocked";
-      ROS_WARN_THROTTLE(0.5, "Autonomous reverse command rejected");
+      ROS_WARN_THROTTLE(0.5, "Autonomous reverse command rejected: full twist stopped");
     } else if (control_source == "joystick" && v < -joystick_reverse_max_speed_) {
       v = -joystick_reverse_max_speed_;
       control_source += "+reverse_speed_limited";
@@ -342,6 +361,7 @@ private:
         bool directional_stop = false;
         if (v > 1e-3 && front_clearance_ <= safety_stop_distance_) {
           v = 0.0;
+          if (control_source == "cmd_vel") w = 0.0;
           directional_stop = true;
           safety_stopped = true;
           control_source += "+front_emergency_stop";
@@ -350,6 +370,7 @@ private:
         } else if (v < -1e-3 &&
                    rear_clearance_ <= safety_rear_stop_distance_) {
           v = 0.0;
+          if (control_source == "cmd_vel") w = 0.0;
           directional_stop = true;
           safety_stopped = true;
           control_source += "+rear_emergency_stop";
@@ -360,12 +381,16 @@ private:
               (front_clearance_ - safety_stop_distance_) /
               (safety_slow_distance_ - safety_stop_distance_)));
           v *= scale;
+          // Autonomous arcs must keep their curvature when slowed; reducing
+          // v alone makes the car turn harder than its collision-checked plan.
+          if (control_source == "cmd_vel") w *= scale;
           control_source += "+front_slow";
         } else if (v < -1e-3 && rear_clearance_ < safety_slow_distance_) {
           const double scale = std::max(0.0, std::min(1.0,
               (rear_clearance_ - safety_rear_stop_distance_) /
               (safety_slow_distance_ - safety_rear_stop_distance_)));
           v *= scale;
+          if (control_source == "cmd_vel") w *= scale;
           control_source += "+rear_slow";
         }
 
@@ -375,10 +400,12 @@ private:
             trajectoryBlocked(v, w)) {
           collision_predicted = true;
           safety_stopped = true;
-          // If translation is unsafe but rotating at the current position is
-          // geometrically clear, keep the turn. This is what lets the vehicle
-          // negotiate a corner without driving into its wall.
-          const bool turn_only_safe = std::fabs(w) > 1e-3 &&
+          // A joystick operator may explicitly keep a safe turn when blocked.
+          // Autonomous motion must stop the entire rejected arc: replacing it
+          // with a spin executes a different trajectory from the TEB plan.
+          const bool turn_only_safe =
+                                      control_source.compare(0, 8, "joystick") == 0 &&
+                                      std::fabs(w) > 1e-3 &&
                                       !trajectoryBlocked(0.0, w);
           v = 0.0;
           if (turn_only_safe) {
@@ -520,6 +547,8 @@ private:
   double rear_clearance_{std::numeric_limits<double>::infinity()};
   double nearest_obstacle_radius_{std::numeric_limits<double>::infinity()};
   std::vector<SafetyPoint> obstacle_points_;
+  SafetyFootprint self_filter_footprint_;
+  SafetyFootprint collision_footprint_;
   bool have_scan_{false};
   ros::Time last_scan_time_;
 

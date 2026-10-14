@@ -12,16 +12,17 @@
 #include <vector>
 
 /**
- * 蓝色A4纸终点检测节点
+ * 红色A4纸终点检测节点
  * 
  * 订阅: /usb_cam/image_raw
  * 发布: /goal_detected (bool标记 - 检测到终点)
  * 
- * 蓝色A4纸在HSV空间:
- *   H: 100~130 (纯蓝色)
- *   比赛说明：蓝色A4纸，短边离地15cm
+ * 红色A4纸在HSV空间:
+ *   H: 170~179 或 0~10 (跨越色相零点)
+ *   当前目标：红色A4纸
  */
 
+// 保留历史节点名、话题和消息类型，兼容导航与云台；默认检测红色。
 class BlueDetector {
 public:
   BlueDetector() : nh_("~") {
@@ -35,8 +36,8 @@ public:
     nh_.param<double>("max_aspect", max_aspect_, 1.70);
     nh_.param<int>("confirm_frames", confirm_frames_, 3);
     nh_.param<int>("clear_frames", clear_frames_, 6);
-    nh_.param<int>("h_min", h_min_, 100);
-    nh_.param<int>("h_max", h_max_, 130);
+    nh_.param<int>("h_min", h_min_, 170);
+    nh_.param<int>("h_max", h_max_, 10);
     nh_.param<int>("s_min", s_min_, 80);
     nh_.param<int>("v_min", v_min_, 80);
     nh_.param<bool>("show_debug", show_debug_, false);
@@ -59,7 +60,7 @@ public:
     min_aspect_ = std::max(0.05, min_aspect_);
     max_aspect_ = std::max(min_aspect_, max_aspect_);
     h_min_ = std::max(0, std::min(179, h_min_));
-    h_max_ = std::max(h_min_, std::min(179, h_max_));
+    h_max_ = std::max(0, std::min(179, h_max_));
     s_min_ = std::max(0, std::min(255, s_min_));
     v_min_ = std::max(0, std::min(255, v_min_));
     black_v_max_ = std::max(0, std::min(255, black_v_max_));
@@ -78,7 +79,7 @@ public:
     black_line_pub_ = nh_.advertise<stm32_bridge::BlackLineObservation>(
         "/black_line/observation", 10);
 
-    ROS_INFO("Blue-goal detector: ratio>=%.3f contour>=%.3f confirm=%d frames",
+    ROS_INFO("Red-goal detector: ratio>=%.3f contour>=%.3f confirm=%d frames",
              ratio_threshold_, min_contour_ratio_, confirm_frames_);
   }
 
@@ -89,11 +90,19 @@ private:
       cv::Mat hsv;
       cv::cvtColor(cvp->image, hsv, cv::COLOR_BGR2HSV);
 
-      // 蓝色范围 (比赛说明：蓝色A4纸)
+      // 红色 HSV 范围
       cv::Scalar lo(h_min_, s_min_, v_min_);
       cv::Scalar hi(h_max_, 255, 255);
       cv::Mat mask;
-      cv::inRange(hsv, lo, hi, mask);
+      if (h_min_ <= h_max_) {
+        cv::inRange(hsv, lo, hi, mask);
+      } else {
+        // 红色跨越 HSV 色相零点：合并 [h_min,179] 与 [0,h_max]。
+        cv::Mat low_hue_mask;
+        cv::inRange(hsv, lo, cv::Scalar(179, 255, 255), mask);
+        cv::inRange(hsv, cv::Scalar(0, s_min_, v_min_), hi, low_hue_mask);
+        cv::bitwise_or(mask, low_hue_mask, mask);
+      }
 
       // 形态学去噪
       cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5));
@@ -103,9 +112,9 @@ private:
       const double image_area = static_cast<double>(mask.rows) * mask.cols;
       const double ratio = static_cast<double>(cv::countNonZero(mask)) / image_area;
 
-      // 单看蓝色像素占比容易被蓝色杂物误触发。必须先在所有轮廓中
+      // 单看红色像素占比容易被红色杂物误触发。必须先在所有轮廓中
       // 筛出尺寸、宽高比和填充率像 A4 纸的候选，再选最大的合格候选。
-      // 旧逻辑先取最大蓝色轮廓，背景蓝色立柱较大时会遮蔽真正的纸张。
+      // 避免较大的背景色块遮蔽真正的纸张。
       std::vector<std::vector<cv::Point>> contours;
       cv::findContours(mask.clone(), contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
       double largest_area = 0.0;
@@ -249,18 +258,18 @@ private:
                    cv::Point(last_black_line_[2], last_black_line_[3]),
                    cv::Scalar(0, 255, 255), 3);
         }
-        cv::imshow("Blue Mask", mask);
+        cv::imshow("Red Mask", mask);
         cv::imshow("Black Line Mask", black_mask);
-        cv::imshow("Blue Detector", cvp->image);
+        cv::imshow("Red Detector", cvp->image);
         cv::waitKey(1);
       }
 
       if (observation.detected) {
         ROS_WARN_THROTTLE(1.0,
-                          "Blue goal confirmed: ratio=%.3f contour=%.3f fill=%.2f",
+                          "Red goal confirmed: ratio=%.3f contour=%.3f fill=%.2f",
                           ratio, contour_ratio, fill_ratio);
       } else if (candidate) {
-        ROS_INFO_THROTTLE(1.0, "Blue candidate: %d/%d ratio=%.3f",
+        ROS_INFO_THROTTLE(1.0, "Red candidate: %d/%d ratio=%.3f",
                           candidate_frames_, confirm_frames_, ratio);
       }
     } catch (const std::exception& e) {
@@ -286,8 +295,8 @@ private:
   double max_aspect_{1.70};
   int confirm_frames_{3};
   int clear_frames_{6};
-  int h_min_{100};
-  int h_max_{130};
+  int h_min_{170};
+  int h_max_{10};
   int s_min_{80};
   int v_min_{80};
   int candidate_frames_{0};

@@ -12,11 +12,12 @@ global_costmap:
   rolling_window: false
   always_send_full_costmap: true
 
-  # 全局规划保留足够的车体安全范围，但让非致命代价更快衰减。
-  # 这样空旷区域优先走短直线，不会被较远障碍推出很大的弧线。
+  # 用较宽的非致命代价带引导全局线向弯道外侧绕行，而不是贴内侧切角。
+  # 0.40m是障碍到车体参考点的软代价范围，不是车身外必须留40cm。
+  # 真实footprint/致命障碍范围不因此扩大，窄路仍可使用高代价区域。
   inflation_layer:
-    inflation_radius: 0.42
-    cost_scaling_factor: 7.0
+    inflation_radius: 0.40
+    cost_scaling_factor: 4.0
 
   plugins:
     - {name: static_layer, type: "costmap_2d::StaticLayer"}

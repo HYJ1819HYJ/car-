@@ -1,5 +1,8 @@
 <?xml version="1.0"?>
 <launch>
+  <!-- STL-derived convex outline; use_stl_footprint:=false restores the legacy rectangle. -->
+  <arg name="use_stl_footprint" default="true"/>
+  <arg name="footprint_file" default="$(find maze_bridge)/config/footprint_stl.yaml"/>
   <!-- ============================================
        旧版GMapping建图启动文件（仅作故障回退，不再推荐）
        用法: roslaunch maze_bridge gmapping_build_map.launch
@@ -12,10 +15,10 @@
   <arg name="baud" default="115200"/>
   <!-- 建图手柄线速度上限；高速度会降低SLAM质量，驾驶时按需控制摇杆量。 -->
   <arg name="max_v" default="0.18"/>
-  <arg name="wheel_diameter" default="0.20894"/>
-  <!-- 物理轮中心距为0.425m；里程计使用旋转实测的有效轮距，重新标定前
-       保留原值0.51375m。 -->
-  <arg name="wheel_base" default="0.51375"/>
+  <arg name="wheel_diameter" default="0.166224818"/>
+  <!-- 物理轮中心距为0.425m；里程计使用旋转实测的有效轮距；2026-10-05 地面标定
+       采用有效值0.408879504m。 -->
+  <arg name="wheel_base" default="0.408879504"/>
   <arg name="ticks_per_rev" default="4096"/>
   <arg name="left_encoder_sign" default="1"/>
   <arg name="right_encoder_sign" default="1"/>
@@ -45,7 +48,7 @@
   <!-- ============ 硬件层 ============ -->
 
   <!-- STM32 串口桥 -->
-  <node pkg="stm32_bridge" type="serial_bridge_node" name="serial_bridge" output="screen">
+  <node pkg="stm32_bridge" type="serial_bridge_node" name="serial_bridge" output="screen" clear_params="true">
     <param name="port" value="$(arg port)"/>
     <param name="baud" value="$(arg baud)"/>
     <param name="max_v" value="$(arg max_v)"/>
@@ -87,7 +90,7 @@
 
   <!-- GMapping 不知道机器人 footprint。必须先删除车架/底盘反射，否则
        保存的静态地图会把小车自身画成障碍，导航起步即处于碰撞状态。 -->
-  <node pkg="stm32_bridge" type="scan_self_filter_node" name="scan_self_filter" output="screen">
+  <node pkg="stm32_bridge" type="scan_self_filter_node" name="scan_self_filter" output="screen" clear_params="true">
     <param name="input_topic" value="/scan_raw"/>
     <param name="output_topic" value="/scan"/>
     <param name="laser_x" value="$(arg laser_x)"/>
@@ -166,4 +169,7 @@
   <node if="$(arg show_rviz)" name="rviz" pkg="rviz" type="rviz"
         args="-d $(find maze_bridge)/rviz/gmapping.rviz" output="screen"/>
 
+  <!-- Applied last so every collision consumer receives the same outline. -->
+  <rosparam if="$(arg use_stl_footprint)"
+            file="$(arg footprint_file)" command="load"/>
 </launch>

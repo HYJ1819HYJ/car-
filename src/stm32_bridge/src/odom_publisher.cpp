@@ -11,8 +11,8 @@
  * 订阅 /wheel_encoder 编码器数据，计算里程并发布 /odom
  * 
  * 参数：
- *   ~wheel_diameter    有效轮径 (m)    默认 0.20894（实车标定）
- *   ~wheel_base        有效轮距 (m)    默认 0.51375（实车标定）
+ *   ~wheel_diameter    有效轮径 (m)    默认 0.166224818（实车标定）
+ *   ~wheel_base        有效轮距 (m)    默认 0.408879504（实车标定）
  *   ~ticks_per_rev     编码器每圈脉冲   默认 4096
  *   ~left_encoder_sign 左编码器方向     默认 1
  *   ~right_encoder_sign右编码器方向     默认 1
@@ -22,8 +22,8 @@
 class OdomPublisher {
 public:
   OdomPublisher() : nh_("~") {
-    nh_.param<double>("wheel_diameter", wheel_diameter_, 0.20894);
-    nh_.param<double>("wheel_base", wheel_base_, 0.51375);
+    nh_.param<double>("wheel_diameter", wheel_diameter_, 0.166224818);
+    nh_.param<double>("wheel_base", wheel_base_, 0.408879504);
     nh_.param<int>("ticks_per_rev", ticks_per_rev_, 4096);
     nh_.param<int>("left_encoder_sign", left_encoder_sign_, 1);
     nh_.param<int>("right_encoder_sign", right_encoder_sign_, 1);

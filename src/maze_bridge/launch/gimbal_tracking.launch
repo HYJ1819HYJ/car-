@@ -1,0 +1,31 @@
+<launch>
+  <!-- Preview defaults to camera/detector only. Use the desktop helper's
+       tracking option after the STM32 reports servo ready. -->
+  <arg name="enable_tracking" default="false"/>
+  <arg name="video_device" default="/dev/robot_camera"/>
+  <arg name="show_image" default="false"/>
+  <arg name="show_debug" default="false"/>
+  <arg name="gimbal_port" default="/dev/ttyUSB1"/>
+
+  <include file="$(find maze_bridge)/launch/usb_cam.launch">
+    <arg name="video_device" value="$(arg video_device)"/>
+    <arg name="show_image" value="$(arg show_image)"/>
+  </include>
+
+  <node pkg="stm32_bridge" type="blue_detector" name="blue_detector" output="screen" required="true">
+    <param name="image_topic" value="/usb_cam/image_raw"/>
+    <param name="black_line_enabled" value="false"/>
+    <param name="show_debug" value="$(arg show_debug)"/>
+  </node>
+
+  <node if="$(arg enable_tracking)" pkg="stm32_bridge" type="gimbal_bridge_node"
+        name="gimbal_bridge" output="screen" required="true">
+    <param name="port" value="$(arg gimbal_port)"/>
+    <param name="baud" value="115200"/>
+    <param name="required" value="true"/>
+    <param name="auto_enable" value="true"/>
+    <param name="center_on_connect" value="false"/>
+    <param name="publish_camera_tf" value="false"/>
+    <param name="invert_target_x" value="true"/>
+  </node>
+</launch>

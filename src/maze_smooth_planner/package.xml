@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>maze_smooth_planner</name>
+  <version>0.1.0</version>
+  <description>Footprint-checked corner rounding around a cost-aware global plan.</description>
+  <maintainer email="hyj@todo.todo">hyj</maintainer>
+  <license>BSD-3-Clause</license>
+  <buildtool_depend>catkin</buildtool_depend>
+  <depend>roscpp</depend>
+  <depend>nav_core</depend>
+  <depend>global_planner</depend>
+  <depend>costmap_2d</depend>
+  <depend>pluginlib</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>std_msgs</depend>
+  <export><nav_core plugin="${prefix}/planner_plugin.xml"/></export>
+</package>

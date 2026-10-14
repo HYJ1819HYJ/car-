@@ -39,8 +39,8 @@
   <arg name="blue_max_aspect" default="1.70"/>
   <arg name="blue_confirm_frames" default="3"/>
   <arg name="blue_clear_frames" default="6"/>
-  <arg name="blue_h_min" default="100"/>
-  <arg name="blue_h_max" default="130"/>
+  <arg name="blue_h_min" default="170"/>
+  <arg name="blue_h_max" default="10"/>
   <arg name="blue_s_min" default="80"/>
   <arg name="blue_v_min" default="80"/>
   <arg name="blue_show_debug" default="false"/>

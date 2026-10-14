@@ -14,10 +14,10 @@ local_costmap:
   rolling_window: true
   always_send_full_costmap: true
 
-  # 硬碰撞仍由真实footprint禁止。缩短外围高代价带，避免行人站在拐角时
-  # 把本可“先直行、再转弯”的通道整体封死。
+  # 缩短外围非致命代价带；真实footprint和碰撞检查保持原值。
+  # inflation_radius是距障碍栅格的距离，不是车体之外的额外间隙。
   inflation_layer:
-    inflation_radius: 0.38
+    inflation_radius: 0.25
     cost_scaling_factor: 7.0
 
   plugins:

@@ -1,16 +1,20 @@
 <?xml version="1.0"?>
 <launch>
+  <!-- STL-derived convex outline; use_stl_footprint:=false restores the legacy rectangle. -->
+  <arg name="use_stl_footprint" default="true"/>
+  <arg name="footprint_file" default="$(find maze_bridge)/config/footprint_stl.yaml"/>
   <!-- ============================================
        完整 ROS 导航栈启动文件
        需要先安装: sudo apt-get install ros-noetic-gmapping
        ros-noetic-amcl ros-noetic-map-server
        ros-noetic-move-base ros-noetic-dwa-local-planner
-       ros-noetic-teb-local-planner
+       ros-noetic-teb-local-planner ros-noetic-global-planner
        ros-noetic-robot-pose-ekf
        ============================================ -->
 
   <!-- 参数 -->
   <arg name="mode" default="navigation"/>   <!-- explore 或 navigation -->
+  <arg name="smooth_global_plan" default="true"/>
   <!-- 旧地图生成于雷达时间戳修复之前，必须重建 v2 地图。 -->
   <arg name="map_file" default="$(find maze_bridge)/../../maps/competition_map_v3.yaml"/>
   <arg name="show_rviz" default="true"/>
@@ -22,19 +26,22 @@
   <!-- 当 ROS +angular.z 实车却右转时使用 -1；架空车轮验证后再落地。 -->
   <arg name="angular_command_sign" default="-1"/>
   <arg name="safety_enable" default="true"/>
-  <arg name="safety_stop_distance" default="0.15"/>
-  <arg name="safety_slow_distance" default="0.60"/>
+  <!-- 前进在车头外8cm停车，30cm内保比例减速；整车扫掠另行检查。 -->
+  <arg name="safety_stop_distance" default="0.08"/>
+  <arg name="safety_slow_distance" default="0.30"/>
   <arg name="safety_rear_stop_distance" default="0.15"/>
   <arg name="safety_prediction_time" default="0.60"/>
-  <arg name="safety_collision_padding" default="0.03"/>
+  <arg name="safety_collision_padding" default="0.02"/>
   <arg name="vehicle_front_x" default="0.3483"/>
   <arg name="vehicle_rear_x" default="-0.1517"/>
   <arg name="vehicle_half_width" default="0.24"/>
   <arg name="max_v" default="0.50"/>
-  <arg name="wheel_diameter" default="0.20894"/>
+  <arg name="max_nav_v" default="0.50"/>
+  <arg name="max_nav_w" default="0.75"/>
+  <arg name="wheel_diameter" default="0.166224818"/>
   <!-- 物理轮中心距为0.425m；差速/滑移转向的里程计必须使用旋转实测得到的
-       有效轮距。驱动系统未更换，重新标定前保留原有效值0.51375m。 -->
-  <arg name="wheel_base" default="0.51375"/>
+       有效轮距。2026-10-05 地面标定采用有效值0.408879504m。 -->
+  <arg name="wheel_base" default="0.408879504"/>
   <arg name="ticks_per_rev" default="4096"/>
   <arg name="laser_x" default="0.315"/>
   <arg name="laser_y" default="0.0"/>
@@ -75,7 +82,7 @@
   <arg name="initial_pose_a" default="0.0"/>
   <arg name="paper_height" default="0.297"/>
   <arg name="fallback_hfov_deg" default="70.0"/>
-  <!-- 远距离蓝色 A4 检测：同时要求连续色块尺寸、A4近似长宽比和填充率。 -->
+  <!-- 远距离红色 A4 检测：同时要求连续色块尺寸、A4近似长宽比和填充率。 -->
   <arg name="blue_ratio_threshold" default="0.0003"/>
   <arg name="blue_contour_ratio" default="0.00025"/>
   <arg name="blue_fill_ratio" default="0.40"/>
@@ -85,8 +92,8 @@
   <arg name="blue_max_aspect" default="1.70"/>
   <arg name="blue_confirm_frames" default="3"/>
   <arg name="blue_clear_frames" default="6"/>
-  <arg name="blue_h_min" default="100"/>
-  <arg name="blue_h_max" default="130"/>
+  <arg name="blue_h_min" default="170"/>
+  <arg name="blue_h_max" default="10"/>
   <arg name="blue_s_min" default="80"/>
   <arg name="blue_v_min" default="80"/>
   <arg name="blue_show_debug" default="false"/>
@@ -113,7 +120,7 @@
   <!-- ============ 1. 硬件层 ============ -->
 
   <!-- STM32 串口桥（默认模式=normal，只监听 /cmd_vel） -->
-  <node pkg="stm32_bridge" type="serial_bridge_node" name="serial_bridge" output="screen">
+  <node pkg="stm32_bridge" type="serial_bridge_node" name="serial_bridge" output="screen" required="true" clear_params="true">
     <param name="port" value="$(arg port)"/>
     <param name="baud" value="$(arg baud)"/>
     <param name="max_v" value="$(arg max_v)"/>
@@ -133,9 +140,9 @@
     <param name="vehicle_rear_x" value="$(arg vehicle_rear_x)"/>
     <param name="vehicle_half_width" value="$(arg vehicle_half_width)"/>
     <param name="vehicle_footprint_padding" value="0.02"/>
-    <!-- 车体半宽0.24m，加3cm预测安全余量。原先按障碍到轮轴距离进行
-         圆形判断，会误禁实际扫不到障碍物的转弯。 -->
-    <param name="safety_half_width" value="0.27"/>
+    <!-- 方向检测半宽与车体半宽+碰撞padding一致，避免多出的侧边带
+         将斜前方墙角当成直行阻挡；转弯仍检查完整真实车体扫掠。 -->
+    <param name="safety_half_width" value="$(eval float(arg('vehicle_half_width')) + float(arg('safety_collision_padding')))"/>
     <param name="laser_x" value="$(arg laser_x)"/>
     <param name="laser_y" value="$(arg laser_y)"/>
     <param name="laser_yaw" value="$(arg laser_yaw)"/>
@@ -154,7 +161,7 @@
   </include>
 
   <!-- 与建图完全相同的车体自反射过滤，AMCL/代价地图只使用 /scan。 -->
-  <node pkg="stm32_bridge" type="scan_self_filter_node" name="scan_self_filter" output="screen">
+  <node pkg="stm32_bridge" type="scan_self_filter_node" name="scan_self_filter" output="screen" clear_params="true">
     <param name="input_topic" value="/scan_raw"/>
     <param name="output_topic" value="/scan"/>
     <param name="laser_x" value="$(arg laser_x)"/>
@@ -174,7 +181,7 @@
     <arg name="camera_info_url" value="$(arg camera_info_url)"/>
   </include>
 
-  <!-- 蓝色终点检测 -->
+  <!-- 红色终点检测 -->
   <node pkg="stm32_bridge" type="blue_detector" name="blue_detector" output="screen">
     <param name="ratio_threshold" value="$(arg blue_ratio_threshold)"/>
     <param name="min_contour_ratio" value="$(arg blue_contour_ratio)"/>
@@ -305,13 +312,12 @@
       <param name="laser_likelihood_max_dist" value="2.0"/>
     </node>
 
-    <!-- move_base + TEB 局部规划。TEB可以在一条轨迹中表达先接近、再原地
-         转向、再前进，解决DWA在紧凑回头弯只能采样恒定圆弧而无解的问题。 -->
-    <node pkg="move_base" type="move_base" name="move_base" output="screen">
-      <param name="base_global_planner" value="navfn/NavfnROS"/>
+    <!-- 平滑全局参考提前入弯；TEB处理速度、角加速度和近场避障。
+         差速车在确有需要且可行时仍可进行安全的原地朝向调整。 -->
+    <node pkg="move_base" type="move_base" name="move_base" output="screen" clear_params="true">
+      <param name="base_global_planner" value="$(eval 'maze_smooth_planner/SmoothGlobalPlanner' if arg('smooth_global_plan') else 'global_planner/GlobalPlanner')"/>
       <param name="base_local_planner" value="teb_local_planner/TebLocalPlannerROS"/>
-      <!-- 全局路径持续重算，不是只在接收目标点时计算一次。新增障碍进入
-           global_costmap 后，最迟约0.2秒开始生成绕行路径。 -->
+      <!-- 按5Hz请求重算全局参考；实际响应还受计算和调度耗时影响。 -->
       <param name="controller_frequency" value="12.0"/>
       <param name="planner_frequency" value="5.0"/>
       <!-- 动态障碍和紧凑弯口允许短时等待/重优化，不再5秒就永久放弃目标。 -->
@@ -333,9 +339,9 @@
       <param name="clear_dynamic_obstacles/reset_distance" value="0.0"/>
       <param name="clear_dynamic_obstacles/affected_maps" value="both"/>
       <rosparam param="clear_dynamic_obstacles/layer_names">[obstacle_layer]</rosparam>
-      <!-- Navfn只在已知自由空间规划，并要求目标落在可行走区域。 -->
-      <param name="NavfnROS/allow_unknown" value="false"/>
-      <param name="NavfnROS/default_tolerance" value="0.05"/>
+      <!-- 带障碍代价的全局选路，避免贴内侧切角；转向运动学由TEB处理。 -->
+      <rosparam file="$(find maze_bridge)/launch/global_planner_params.yaml" command="load"/>
+      <rosparam if="$(arg smooth_global_plan)" file="$(find maze_bridge)/launch/smooth_global_planner_params.yaml" command="load"/>
 
       <!-- 全局代价地图 -->
       <rosparam file="$(find maze_bridge)/launch/costmap_common_params.yaml" command="load" ns="global_costmap"/>
@@ -343,6 +349,10 @@
       <rosparam file="$(find maze_bridge)/launch/local_costmap_params.yaml" command="load"/>
       <rosparam file="$(find maze_bridge)/launch/global_costmap_params.yaml" command="load"/>
       <rosparam file="$(find maze_bridge)/launch/teb_local_planner_params.yaml" command="load"/>
+      <rosparam if="$(arg smooth_global_plan)" file="$(find maze_bridge)/launch/smooth_teb_params.yaml" command="load"/>
+      <!-- Explicit startup limits also apply before the first goal is sent. -->
+      <param name="TebLocalPlannerROS/max_vel_x" value="$(arg max_nav_v)"/>
+      <param name="TebLocalPlannerROS/max_vel_theta" value="$(arg max_nav_w)"/>
     </node>
 
     <!-- 加载地图 -->
@@ -387,4 +397,7 @@
     <remap from="/goal" to="/move_base_simple/goal"/>
   </node>
 
+  <!-- Applied last so every collision consumer receives the same outline. -->
+  <rosparam if="$(arg use_stl_footprint)"
+            file="$(arg footprint_file)" command="load"/>
 </launch>

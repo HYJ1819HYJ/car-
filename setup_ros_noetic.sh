@@ -65,6 +65,7 @@ $SUDO apt-get install -y \
     ros-noetic-dwa-local-planner \
     ros-noetic-teb-local-planner \
     ros-noetic-navfn \
+    ros-noetic-global-planner \
     ros-noetic-joy \
     ros-noetic-serial \
     ros-noetic-usb-cam \

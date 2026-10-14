@@ -1,0 +1,18 @@
+# Cost-aware global route. This is a 2-D position search; TEB below is
+# responsible for footprint orientation, turn speed/acceleration and time.
+GlobalPlanner:
+  allow_unknown: false
+  default_tolerance: 0.05
+  use_dijkstra: true
+  # Linear potentials and integer-cell traceback avoid gradient-path folds
+  # observed in navigation_20261007_162643. TEB smooths the grid reference.
+  use_quadratic: false
+  use_grid_path: true
+  old_navfn_behavior: true
+  lethal_cost: 253
+  neutral_cost: 50
+  cost_factor: 3.0
+  publish_potential: false
+  # Tangent headings seed TEB; this is not a heading-aware global search.
+  orientation_mode: 1
+  orientation_window_size: 3

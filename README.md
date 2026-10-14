@@ -1,12 +1,16 @@
 # 迷宫小车 ROS1 工程
 
-本仓库保存迷宫小车的 ROS Noetic 上位机代码，包含 STM32 串口桥、轮式里程计、激光雷达自反射过滤、SLAM 建图、AMCL 导航、动态避障、手柄控制、USB 摄像头、蓝色终点识别与云台通信。
+本仓库保存迷宫小车的 ROS Noetic 上位机代码，包含 STM32 串口桥、轮式里程计、激光雷达自反射过滤、SLAM 建图、AMCL 导航、动态避障、手柄控制、USB 摄像头、红色终点识别与云台通信。
+
+`asuka-main` 分支保存 Asuka 基于队友原项目进行的调试和改进，包含完整车体轮廓、平滑全局规划、里程计与建图参数调整及外设调试工具。此仓库为 ROS1 上位机工程，不包含 STM32 下位机固件；LakiBeam 厂商驱动仍需单独准备。编译产物、现场日志和临时回滚备份不纳入版本控制；文档中的 `outputs/` 路径指本地调试记录。
 
 ## 目录
 
-- `src/stm32_bridge`：底盘串口、里程计、雷达过滤、蓝色目标检测、云台桥接及测试。
+- `src/stm32_bridge`：底盘串口、里程计、雷达过滤、红色目标检测、云台桥接及测试。
 - `src/maze_bridge`：硬件、建图、导航、代价地图和 RViz 的启动与参数文件。
-- `src/maze_planner`：手柄控制、迷宫控制、轨迹记录/复现和蓝色终点导航。
+- `src/maze_planner`：手柄控制、迷宫控制、轨迹记录/复现和红色终点导航。
+- `src/maze_smooth_planner`：检查完整车体轮廓与路径扫掠碰撞的平滑全局规划器。
+- `models`、`tools`：STL 车体模型、轮廓生成和调试工具。
 - `maps`：当前比赛地图；换场地后应重新建图。
 - `docs`：硬件连接、功能验证、建图和比赛流程说明。
 - `build_map.sh`：slam_toolbox 建图入口。
@@ -22,7 +26,7 @@
 
 ```bash
 sudo apt update && sudo apt install -y git
-git clone https://github.com/HYJ1819HYJ/car-.git ~/xiaoche
+git clone --branch asuka-main https://github.com/HYJ1819HYJ/car-.git ~/xiaoche
 cd ~/xiaoche
 chmod +x setup_ros_noetic.sh
 ./setup_ros_noetic.sh
@@ -87,3 +91,5 @@ catkin_test_results
 ## 许可
 
 MIT License，见 [`LICENSE`](LICENSE)。
+
+摄像头默认识别红色 A4 目标（HSV H=170–179 或 0–10，S/V≥80）。为兼容现有导航和云台，节点、话题及参数仍保留 `blue_*` 名称。修改后需重新编译并重启识别节点；实际光照下的效果需现场确认。

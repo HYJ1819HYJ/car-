@@ -1,0 +1,6 @@
+# Loaded only with smooth_global_plan=true. Base TEB settings stay available
+# for a complete one-argument rollback of this trial.
+TebLocalPlannerROS:
+  max_global_plan_lookahead_dist: 1.6
+  global_plan_viapoint_sep: 0.40
+  weight_viapoint: 0.5

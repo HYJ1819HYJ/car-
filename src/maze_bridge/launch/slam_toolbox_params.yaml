@@ -56,8 +56,10 @@ loop_match_minimum_response_fine: 0.50
 
 correlation_search_space_dimension: 0.8
 correlation_search_space_resolution: 0.01
-# Match uncertainty should cover about two output cells, not a 10 cm band.
-correlation_search_space_smear_deviation: 0.05
+# A wide matching blur lets small turn errors align to the same response band
+# and accumulate into separate wall edges. Validated on the Oct 7 turn bag
+# and the saved 200-scan graph; this is SLAM matching blur, not costmap inflation.
+correlation_search_space_smear_deviation: 0.025
 
 loop_search_space_dimension: 8.0
 loop_search_space_resolution: 0.05
@@ -67,7 +69,10 @@ loop_search_space_smear_deviation: 0.03
 # implausible jumps to the next parallel board.
 distance_variance_penalty: 0.50
 angle_variance_penalty: 1.00
-fine_search_angle_offset: 0.00349
+# In the Noetic Karto implementation this is the FINE angular sample step
+# (the search range is half coarse_angle_resolution). 0.05 degree sampling
+# reduces accumulated heading quantization on the parallel board walls.
+fine_search_angle_offset: 0.000873
 coarse_search_angle_offset: 0.349
 coarse_angle_resolution: 0.0349
 minimum_angle_penalty: 0.90

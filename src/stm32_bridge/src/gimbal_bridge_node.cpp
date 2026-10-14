@@ -159,6 +159,7 @@ class GimbalBridgeNode {
     frame[1] = command;
     frame[2] = static_cast<uint8_t>(frame[0] + frame[1]);
     serial_.write(frame);
+    if (command != kCommandStatus) last_control_command_ = ros::Time::now();
   }
 
   void sendTarget(bool found, uint16_t x, uint16_t y) {
@@ -309,7 +310,10 @@ class GimbalBridgeNode {
         sendCommand(kCommandEnable);
         startup_stage_ = 2;
       }
-      if ((now - last_status_request_).toSec() >= 1.0) {
+      // The MCU stores only one pending command until its main loop runs.
+      // Do not overwrite center/enable with a status query immediately after it.
+      if ((now - last_status_request_).toSec() >= 1.0 &&
+          (now - last_control_command_).toSec() >= 0.2) {
         sendCommand(kCommandStatus);
         last_status_request_ = now;
       }
@@ -339,6 +343,7 @@ class GimbalBridgeNode {
   ros::Timer timer_;
   tf2_ros::TransformBroadcaster tf_broadcaster_;
   serial::Serial serial_;
+  ros::Time last_control_command_;
 
   std::string port_;
   int baud_{115200};

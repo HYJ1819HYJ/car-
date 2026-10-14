@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <limits>
 #include <string>
+#include "stm32_bridge/footprint_parameters.hpp"
 
 // Removes lidar returns produced by brackets/chassis inside the robot body.
 // GMapping does not know the robot footprint; feeding those returns directly to
@@ -24,6 +25,18 @@ public:
     pnh_.param<double>("vehicle_half_width", vehicle_half_width_, 0.24);
     pnh_.param<double>("padding", padding_, 0.02);
 
+    footprint_.front=vehicle_front_x_;
+    footprint_.rear=vehicle_rear_x_;
+    footprint_.half_width=vehicle_half_width_;
+    footprint_.padding=padding_;
+    if (!stm32_bridge::readFootprintParam(pnh_,&footprint_)) {
+      ros::shutdown();
+      return;
+    }
+    vehicle_front_x_=footprint_.front;
+    vehicle_rear_x_=footprint_.rear;
+    vehicle_half_width_=footprint_.half_width;
+
     scan_pub_ = nh_.advertise<sensor_msgs::LaserScan>(output_topic_, 10);
     count_pub_ = nh_.advertise<std_msgs::UInt32>("/scan_self_filtered_count", 10);
     scan_sub_ = nh_.subscribe(input_topic_, 10, &ScanSelfFilterNode::scanCb, this);
@@ -31,6 +44,7 @@ public:
     ROS_INFO("Scan self-filter: %s -> %s, body x=[%.3f, %.3f], |y|<=%.3f, padding=%.3f",
              input_topic_.c_str(), output_topic_.c_str(), vehicle_rear_x_,
              vehicle_front_x_, vehicle_half_width_, padding_);
+    ROS_INFO("Scan self-filter polygon vertices: %zu",footprint_.vertices.size());
   }
 
 private:
@@ -46,10 +60,9 @@ private:
           static_cast<double>(i) * output.angle_increment + laser_yaw_;
       const double x_base = laser_x_ + range * std::cos(angle);
       const double y_base = laser_y_ + range * std::sin(angle);
-      const bool inside_robot =
-          x_base >= vehicle_rear_x_ - padding_ &&
-          x_base <= vehicle_front_x_ + padding_ &&
-          std::fabs(y_base) <= vehicle_half_width_ + padding_;
+      const bool inside_robot=stm32_bridge::pointInsideFootprint(
+          stm32_bridge::SafetyPoint{x_base,y_base},
+          stm32_bridge::SafetyPoint{0.0,0.0},0.0,footprint_);
 
       if (!inside_robot) continue;
       output.ranges[i] = std::numeric_limits<float>::infinity();
@@ -77,6 +90,7 @@ private:
   double vehicle_front_x_{0.3483};
   double vehicle_rear_x_{-0.1517};
   double vehicle_half_width_{0.24};
+  stm32_bridge::SafetyFootprint footprint_;
   double padding_{0.02};
 };
 

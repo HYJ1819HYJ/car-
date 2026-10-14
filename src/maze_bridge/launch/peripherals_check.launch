@@ -1,0 +1,19 @@
+<launch>
+  <!-- Sensor-only startup: no chassis, gimbal, teleoperation or navigation nodes. -->
+  <arg name="video_device" default="/dev/robot_camera"/>
+  <arg name="hostip" default="192.168.198.1"/>
+  <arg name="sensorip" default="192.168.198.2"/>
+  <arg name="show_image" default="false"/>
+  <arg name="show_rviz" default="false"/>
+  <arg name="use_joystick" default="true"/>
+  <include file="$(find maze_bridge)/launch/usb_cam.launch">
+    <arg name="video_device" value="$(arg video_device)"/>
+    <arg name="show_image" value="$(arg show_image)"/>
+  </include>
+  <include file="$(find maze_bridge)/launch/lakibeam1_scan_view_usb.launch">
+    <arg name="hostip" value="$(arg hostip)"/>
+    <arg name="sensorip" value="$(arg sensorip)"/>
+    <arg name="show_rviz" value="$(arg show_rviz)"/>
+  </include>
+  <include if="$(arg use_joystick)" file="$(find maze_bridge)/launch/joystick_check.launch"/>
+</launch>

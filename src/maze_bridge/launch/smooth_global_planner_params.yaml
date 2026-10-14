@@ -1,0 +1,12 @@
+SmoothGlobalPlanner:
+  source_planner_ns: GlobalPlanner
+  sample_spacing: 0.025
+  shortcut_deviation: 0.06
+  shortcut_length: 0.80
+  preferred_radius: 0.35
+  smoothing_clearance: 0.05
+  collision_padding: 0.02
+  # Limits search/rounding work; mandatory final sweep checking still runs.
+  max_compute_ms: 80.0
+  max_lateral_adjustment: 0.15
+  goal_tangent_length: 0.30

@@ -4,7 +4,7 @@
 # 以驱动轮轴中心(base_footprint)为原点：车头0.3483m、车尾0.1517m、半宽0.24m。
 # 非对称车体必须使用多边形，不能用原先的 robot_radius=0.25m。
 footprint: [[0.3483, 0.24], [0.3483, -0.24], [-0.1517, -0.24], [-0.1517, 0.24]]
-footprint_padding: 0.02
+footprint_padding: 0.01
 
 obstacle_layer:
   enabled: true
