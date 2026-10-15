@@ -2,6 +2,7 @@
 #include <maze_smooth_planner/smoother.h>
 #include <costmap_2d/cost_values.h>
 #include <cmath>
+#include <fstream>
 using namespace maze_smooth_planner;
 int main(int argc,char** argv){::testing::InitGoogleTest(&argc,argv);return RUN_ALL_TESTS();}
 std::vector<geometry_msgs::Point> body() {
@@ -88,4 +89,47 @@ TEST(Smoothing,GoalTangentIsRespectedByContinuousOpenApproach) {
   ASSERT_GT(out.size(),20u);EXPECT_FALSE(s.fallback);
   EXPECT_NEAR(std::sin(out[out.size()-2].yaw-M_PI),0,.02);
   EXPECT_TRUE(pathFree(out,map,body(),c.collision_padding));
+}
+
+TEST(FootprintSearch,RecordedTurnFindsDifferentSweptSafeRoute) {
+  std::ifstream f(std::string(MAZE_PLANNER_TEST_DATA)+"/blocked_turn_20261014.txt");
+  ASSERT_TRUE(f.good());
+  unsigned int w,h;double res,ox,oy;f>>w>>h>>res>>ox>>oy;
+  costmap_2d::Costmap2D map(w,h,res,ox,oy,0);
+  for(unsigned int i=0;i<w*h;++i){int value;f>>value;map.getCharMap()[i]=value;}
+  size_t n;f>>n;std::vector<geometry_msgs::Point> outline(n);
+  for(auto& p:outline)f>>p.x>>p.y;
+  Pose start,goal;f>>start.x>>start.y>>start.yaw>>goal.x>>goal.y>>goal.yaw;
+  f>>n;std::vector<Pose> old(n);for(auto& p:old)f>>p.x>>p.y>>p.yaw;
+  ASSERT_TRUE(f.good());ASSERT_FALSE(pathFree(old,map,outline,.02));
+  Config cfg;cfg.replan_compute_ms=1500;std::vector<Pose> out;
+  ASSERT_TRUE(footprintReplan(start,goal,map,outline,cfg,out));
+  ASSERT_GT(out.size(),10u);ASSERT_TRUE(pathFree(out,map,outline,.02));
+  EXPECT_DOUBLE_EQ(out.front().x,start.x);EXPECT_DOUBLE_EQ(out.front().yaw,start.yaw);
+  EXPECT_DOUBLE_EQ(out.back().x,goal.x);EXPECT_DOUBLE_EQ(out.back().yaw,goal.yaw);
+  // All interior translation primitives move forward along their heading.
+  // The exact start/goal connectors are independently sweep checked above.
+  for(size_t i=2;i+1<out.size();++i){
+    double dx=out[i].x-out[i-1].x,dy=out[i].y-out[i-1].y;
+    if(std::hypot(dx,dy)<1e-8)continue;
+    EXPECT_GT(dx*std::cos(out[i-1].yaw)+dy*std::sin(out[i-1].yaw),0);
+    EXPECT_NEAR(dx*std::sin(out[i-1].yaw)-dy*std::cos(out[i-1].yaw),0,1e-8);
+  }
+}
+
+TEST(FootprintSearch,UnknownBarrierNeverProducesUnsafePath) {
+  auto map=freeMap();
+  for(unsigned int y=0;y<map.getSizeInCellsY();++y)
+    for(unsigned int x=115;x<125;++x)map.setCost(x,y,255);
+  Config cfg;cfg.replan_compute_ms=30;std::vector<Pose> out;
+  EXPECT_FALSE(footprintReplan({-1,0,0},{1,0,0},map,body(),cfg,out));
+  EXPECT_TRUE(out.empty());
+}
+
+TEST(FootprintSearch,BlockedStartAndInvalidBudgetAreRejected) {
+  auto map=freeMap();Config cfg;std::vector<Pose> out;
+  EXPECT_FALSE(footprintReplan({2.9,0,0},{0,0,0},map,body(),cfg,out));
+  cfg.replan_compute_ms=0;
+  EXPECT_FALSE(footprintReplan({-1,0,0},{1,0,0},map,body(),cfg,out));
+  EXPECT_TRUE(out.empty());
 }

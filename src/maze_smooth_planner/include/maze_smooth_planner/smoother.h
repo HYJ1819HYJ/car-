@@ -15,6 +15,7 @@ struct Config {
   double max_compute_ms = 80.0;
   double max_lateral_adjustment = 0.15;
   double goal_tangent_length = 0.30;
+  double replan_compute_ms = 250.0;
 };
 struct Statistics { int rounded_corners = 0; int repair_steps = 0; bool fallback = false; double elapsed_ms = 0; Pose failed_pose{0,0,0}; };
 // Unknown cells and map boundaries are blocked. Checks polygon interiors,
@@ -23,6 +24,10 @@ bool poseFree(const Pose&, const costmap_2d::Costmap2D&,
               const std::vector<geometry_msgs::Point>&, double padding);
 bool pathFree(const std::vector<Pose>&, const costmap_2d::Costmap2D&,
               const std::vector<geometry_msgs::Point>&, double padding, Pose* failed_pose=nullptr);
+bool footprintReplan(const Pose& start, const Pose& goal,
+                     const costmap_2d::Costmap2D&,
+                     const std::vector<geometry_msgs::Point>&, const Config&,
+                     std::vector<Pose>&);
 bool smooth(const std::vector<Pose>&, const costmap_2d::Costmap2D&,
             const std::vector<geometry_msgs::Point>&, const Config&,
             std::vector<Pose>&, Statistics&);

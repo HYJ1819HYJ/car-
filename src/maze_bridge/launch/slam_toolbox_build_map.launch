@@ -61,7 +61,8 @@
     <param name="vehicle_front_x" value="$(arg vehicle_front_x)"/>
     <param name="vehicle_rear_x" value="$(arg vehicle_rear_x)"/>
     <param name="vehicle_half_width" value="$(arg vehicle_half_width)"/>
-    <param name="vehicle_footprint_padding" value="0.02"/>
+    <!-- Filter only physical chassis returns; keep external near-wall returns. -->
+    <param name="vehicle_footprint_padding" value="0.0"/>
     <param name="safety_half_width" value="0.27"/>
     <param name="laser_x" value="$(arg laser_x)"/>
     <param name="laser_y" value="$(arg laser_y)"/>
@@ -92,7 +93,8 @@
     <param name="vehicle_front_x" value="$(arg vehicle_front_x)"/>
     <param name="vehicle_rear_x" value="$(arg vehicle_rear_x)"/>
     <param name="vehicle_half_width" value="$(arg vehicle_half_width)"/>
-    <param name="padding" value="0.02"/>
+    <!-- Collision clearance belongs to the safety/planner checks, not this mask. -->
+    <param name="padding" value="0.0"/>
   </node>
 
   <include if="$(arg use_camera)" file="$(find maze_bridge)/launch/usb_cam.launch">

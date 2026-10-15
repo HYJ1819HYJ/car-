@@ -1,0 +1,9 @@
+image: competition_map_20261015_final_corner_clearance.pgm
+resolution: 0.025
+origin:
+- -2.287561
+- -4.288709
+- 0.0
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.196

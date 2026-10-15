@@ -11,7 +11,9 @@ GlobalPlanner:
   old_navfn_behavior: true
   lethal_cost: 253
   neutral_cost: 50
-  cost_factor: 3.0
+  # Keep more of the inflation gradient: factor=3 clamps costs >=68 to
+  # the same value, hiding the wider corridor around the inner corner.
+  cost_factor: 1.0
   publish_potential: false
   # Tangent headings seed TEB; this is not a heading-aware global search.
   orientation_mode: 1

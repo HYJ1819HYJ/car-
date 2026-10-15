@@ -17,7 +17,7 @@ local_costmap:
   # 缩短外围非致命代价带；真实footprint和碰撞检查保持原值。
   # inflation_radius是距障碍栅格的距离，不是车体之外的额外间隙。
   inflation_layer:
-    inflation_radius: 0.25
+    inflation_radius: 0.10
     cost_scaling_factor: 7.0
 
   plugins:

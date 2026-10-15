@@ -12,12 +12,11 @@ global_costmap:
   rolling_window: false
   always_send_full_costmap: true
 
-  # 用较宽的非致命代价带引导全局线向弯道外侧绕行，而不是贴内侧切角。
-  # 0.40m是障碍到车体参考点的软代价范围，不是车身外必须留40cm。
-  # 真实footprint/致命障碍范围不因此扩大，窄路仍可使用高代价区域。
+  # 缩短外围软代价带，保留真实车身和整车扫掠检查。
+  # 0.40m从障碍栅格起算；不是车身外额外留40cm。
   inflation_layer:
     inflation_radius: 0.40
-    cost_scaling_factor: 4.0
+    cost_scaling_factor: 5.0
 
   plugins:
     - {name: static_layer, type: "costmap_2d::StaticLayer"}

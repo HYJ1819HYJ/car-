@@ -1,0 +1,10 @@
+# Map-specific selections; centers are in the saved map frame, meters.
+map: competition_map_20261015_final.yaml
+extra_clearance: 0.05
+regions:
+  - name: middle_divider_tip
+    center: [1.3125, -0.50]
+    selection_radius: 0.15
+  - name: middle_divider_inner_corner
+    center: [0.3125, -0.5125]
+    selection_radius: 0.15

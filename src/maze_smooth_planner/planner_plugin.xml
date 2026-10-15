@@ -2,4 +2,7 @@
   <class name="maze_smooth_planner/SmoothGlobalPlanner" type="maze_smooth_planner::SmoothGlobalPlanner" base_class_type="nav_core::BaseGlobalPlanner">
     <description>Cost-aware grid search followed by footprint-checked tangent-continuous corner rounding.</description>
   </class>
+  <class name="maze_smooth_planner/ForwardTebLocalPlanner" type="maze_smooth_planner::ForwardTebLocalPlanner" base_class_type="nav_core::BaseLocalPlanner">
+    <description>TEB with complete-footprint checked stationary turns for rejected reverse requests.</description>
+  </class>
 </library>

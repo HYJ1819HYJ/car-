@@ -1,0 +1,18 @@
+{
+  "map": "competition_map_20261015_final.yaml",
+  "source_sha256": "1467b1d6d9c727a1ca687f5fb6dd6995f8234f269b3fe4821855427d36274d9d",
+  "mask_sha256": "39f43a57399fa8bcde38793ef605e74b06a21c4d3db2a65336c2016c68c0a691",
+  "selections": [
+    {
+      "name": "middle_divider_tip",
+      "cells": 18
+    },
+    {
+      "name": "middle_divider_inner_corner",
+      "cells": 45
+    }
+  ],
+  "extra_clearance": 0.05,
+  "mask_cells": 167,
+  "added_free_cells": 84
+}

@@ -1,0 +1,2 @@
+# Preserve occupancy-map bytes used by the source/mask hash checks.
+*.pgm binary

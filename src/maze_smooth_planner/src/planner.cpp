@@ -8,6 +8,7 @@
 #include <boost/thread/locks.hpp>
 #include <mutex>
 #include <sstream>
+#include <chrono>
 
 namespace maze_smooth_planner {
 class SmoothGlobalPlanner : public nav_core::BaseGlobalPlanner {
@@ -28,8 +29,10 @@ class SmoothGlobalPlanner : public nav_core::BaseGlobalPlanner {
     nh.param("max_compute_ms",cfg_.max_compute_ms,cfg_.max_compute_ms);
     nh.param("max_lateral_adjustment",cfg_.max_lateral_adjustment,cfg_.max_lateral_adjustment);
     nh.param("goal_tangent_length",cfg_.goal_tangent_length,cfg_.goal_tangent_length);
+    nh.param("replan_compute_ms",cfg_.replan_compute_ms,cfg_.replan_compute_ms);
     if(cfg_.sample_spacing<=0 || cfg_.preferred_radius<=0 || cfg_.max_compute_ms<=0 ||
-       cfg_.collision_padding<0 || cfg_.smoothing_clearance<cfg_.collision_padding)
+       cfg_.collision_padding<0 || cfg_.smoothing_clearance<cfg_.collision_padding ||
+       !std::isfinite(cfg_.replan_compute_ms) || cfg_.replan_compute_ms<=0)
       throw std::runtime_error("Invalid SmoothGlobalPlanner geometry settings");
     plan_pub_=nh.advertise<nav_msgs::Path>("plan",1,true);
     compatible_pub_=priv.advertise<nav_msgs::Path>("GlobalPlanner/plan",1,true);
@@ -60,10 +63,17 @@ class SmoothGlobalPlanner : public nav_core::BaseGlobalPlanner {
     for(const auto& p:raw){const auto& q=p.pose.orientation;
       double yaw=std::atan2(2*(q.w*q.z+q.x*q.y),1-2*(q.y*q.y+q.z*q.z));
       input.push_back({p.pose.position.x,p.pose.position.y,yaw});}
+    const auto begin=std::chrono::steady_clock::now();
     Statistics stats;bool valid=smooth(input,snapshot,body,cfg_,output,stats);
+    bool search_replan=false;
+    if(!valid && footprintReplan(input.front(),input.back(),snapshot,body,cfg_,output)) {
+      valid=true;search_replan=true;stats.fallback=true;
+    }
+    stats.elapsed_ms=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-begin).count();
     std::ostringstream json;json<<"{\"valid\":"<<(valid?"true":"false")<<",\"raw_poses\":"<<raw.size()
       <<",\"smooth_poses\":"<<output.size()<<",\"rounded_corners\":"<<stats.rounded_corners
       <<",\"repair_steps\":"<<stats.repair_steps<<",\"fallback\":"<<(stats.fallback?"true":"false")<<",\"smoothing_ms\":"<<stats.elapsed_ms
+      <<",\"search_replan\":"<<(search_replan?"true":"false")
       <<",\"start_free\":"<<(poseFree(input.front(),snapshot,body,cfg_.collision_padding)?"true":"false")
       <<",\"goal_free\":"<<(poseFree(input.back(),snapshot,body,cfg_.collision_padding)?"true":"false")
       <<",\"failed_pose\":["<<stats.failed_pose.x<<","<<stats.failed_pose.y<<","<<stats.failed_pose.yaw<<"]}";
