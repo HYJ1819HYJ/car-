@@ -18,9 +18,17 @@
   <arg name="forward_only_local_planner" default="true"/>
   <!-- 旧地图生成于雷达时间戳修复之前，必须重建 v2 地图。 -->
   <arg name="map_file" default="$(find maze_bridge)/../../maps/competition_map_v3.yaml"/>
-  <!-- Selections are tied to this saved map; new maps need new selections. -->
-  <arg name="corner_clearance" default="$(eval arg('map_file').endswith('competition_map_20261015_final.yaml'))"/>
-  <arg name="corner_clearance_map" default="$(eval arg('map_file')[:-5] + '_corner_clearance.yaml')"/>
+  <!-- Prepare a source-matched mask automatically before costmaps can use it. -->
+  <arg name="corner_clearance" default="true"/>
+  <!-- Empty means reuse a reviewed sidecar/cache or generate a new mask. -->
+  <arg name="corner_clearance_map" default=""/>
+  <arg name="corner_extra_clearance" default="0.05"/>
+  <arg name="wall_endpoint_clearance" default="true"/>
+  <arg name="wall_endpoint_radius" default="0.05"/>
+  <arg name="corner_minimum_wall_length" default="0.25"/>
+  <arg name="corner_minimum_turn_degrees" default="45"/>
+  <arg name="corner_scope" default="main_walls"/>
+  <arg name="corner_bounds" default="[]"/>
   <arg name="show_rviz" default="true"/>
   <arg name="port" default="/dev/ttyUSB0"/>
   <arg name="baud" default="115200"/>
@@ -329,6 +337,10 @@
     <node pkg="move_base" type="move_base" name="move_base" output="screen" clear_params="true">
       <param name="base_global_planner" value="$(eval 'maze_smooth_planner/SmoothGlobalPlanner' if arg('smooth_global_plan') else 'global_planner/GlobalPlanner')"/>
       <param name="base_local_planner" value="$(eval 'maze_smooth_planner/ForwardTebLocalPlanner' if arg('forward_only_local_planner') else 'teb_local_planner/TebLocalPlannerROS')"/>
+      <!-- Planning previews must use the same occupied space as navigation;
+           the upstream service otherwise clears a window around the robot. -->
+      <param name="make_plan_clear_costmap" value="false"/>
+      <param name="make_plan_add_unreachable_goal" value="false"/>
       <!-- 按5Hz请求重算全局参考；实际响应还受计算和调度耗时影响。 -->
       <param name="controller_frequency" value="12.0"/>
       <param name="planner_frequency" value="5.0"/>
@@ -346,9 +358,10 @@
         - name: clear_dynamic_obstacles
           type: clear_costmap_recovery/ClearCostmapRecovery
       </rosparam>
-      <!-- reset_distance=0 清空整个 obstacle_layer；静态地图层不受影响，
-           下一帧雷达会重新标记真实障碍，串口安全层仍直接用实时雷达兜底。 -->
-      <param name="clear_dynamic_obstacles/reset_distance" value="0.0"/>
+      <!-- 保留车周围4m方形内的观测，覆盖完整局部窗口。盲区里的箱子不能
+           因恢复动作被忘记；附近旧观测仅由真实清障射线释放。 -->
+      <param name="clear_dynamic_obstacles/reset_distance" value="4.0"/>
+      <param name="clear_dynamic_obstacles/invert_area_to_clear" value="false"/>
       <param name="clear_dynamic_obstacles/affected_maps" value="both"/>
       <rosparam param="clear_dynamic_obstacles/layer_names">[obstacle_layer]</rosparam>
       <!-- 带障碍代价的全局选路，避免贴内侧切角；转向运动学由TEB处理。 -->
@@ -372,13 +385,16 @@
     <node pkg="map_server" type="map_server" name="map_server" 
           args="$(arg map_file)"/>
     <group if="$(arg corner_clearance)" ns="corner_clearance">
-      <node pkg="maze_bridge" type="check_corner_clearance_map.py" name="check_map" required="true" output="screen">
+      <node pkg="maze_bridge" type="corner_clearance_map.py" name="map_provider" required="true" output="screen">
         <param name="map_file" value="$(arg map_file)"/>
         <param name="mask_file" value="$(arg corner_clearance_map)"/>
-      </node>
-      <node pkg="map_server" type="map_server" name="map_server" args="$(arg corner_clearance_map)" required="true">
-        <param name="frame_id" value="map"/>
-        <remap from="map" to="/corner_clearance_map"/>
+        <param name="extra_clearance" value="$(arg corner_extra_clearance)"/>
+        <param name="include_wall_endpoints" value="$(arg wall_endpoint_clearance)"/>
+        <param name="wall_endpoint_radius" value="$(arg wall_endpoint_radius)"/>
+        <param name="minimum_wall_length" value="$(arg corner_minimum_wall_length)"/>
+        <param name="minimum_turn_degrees" value="$(arg corner_minimum_turn_degrees)"/>
+        <param name="scope" value="$(arg corner_scope)"/>
+        <rosparam param="bounds" subst_value="true">$(arg corner_bounds)</rosparam>
       </node>
     </group>
 

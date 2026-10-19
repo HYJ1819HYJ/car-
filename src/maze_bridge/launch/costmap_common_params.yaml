@@ -16,7 +16,9 @@ obstacle_layer:
   laser_scan:
     sensor_frame: laser
     data_type: LaserScan
-    topic: /scan
+    # Self-occluded rays are NaN here, so they cannot erase obstacles in the
+    # chassis shadow. Real no-hit (+inf) rays still clear observed free space.
+    topic: /scan_obstacles
     marking: true
     clearing: true
     # 过滤后的雷达约30Hz。短时保留动态障碍，避免人体边缘在相邻扫描间闪烁，

@@ -10,6 +10,7 @@ project(maze_bridge)
 find_package(catkin REQUIRED COMPONENTS
   roscpp
 )
+catkin_python_setup()
 
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
@@ -107,7 +108,7 @@ catkin_package(
 #  DEPENDS system_lib
 )
 
-catkin_install_python(PROGRAMS scripts/stationary_amcl_update.py scripts/check_corner_clearance_map.py
+catkin_install_python(PROGRAMS scripts/stationary_amcl_update.py scripts/check_corner_clearance_map.py scripts/corner_clearance_map.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 
 ###########

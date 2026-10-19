@@ -1,0 +1,101 @@
+{
+  "id": "01_open",
+  "title": "开阔区新增箱体",
+  "expected": "reach_goal",
+  "centers": [
+    [
+      5.5,
+      6.3
+    ],
+    [
+      8.15,
+      2.6
+    ]
+  ],
+  "boxes": [
+    {
+      "id": 1,
+      "center": [
+        5.5,
+        6.3
+      ],
+      "size": [
+        0.75,
+        0.675,
+        0.6
+      ],
+      "yaw": 0.0,
+      "corners": [
+        [
+          5.125,
+          5.9624999999999995
+        ],
+        [
+          5.875,
+          5.9624999999999995
+        ],
+        [
+          5.875,
+          6.6375
+        ],
+        [
+          5.125,
+          6.6375
+        ]
+      ],
+      "color": [
+        1,
+        0.4,
+        0.05
+      ]
+    },
+    {
+      "id": 2,
+      "center": [
+        8.15,
+        2.6
+      ],
+      "size": [
+        0.75,
+        0.675,
+        0.6
+      ],
+      "yaw": 0.0,
+      "corners": [
+        [
+          7.775,
+          2.2625
+        ],
+        [
+          8.525,
+          2.2625
+        ],
+        [
+          8.525,
+          2.9375
+        ],
+        [
+          7.775,
+          2.9375
+        ]
+      ],
+      "color": [
+        0.65,
+        0.1,
+        0.85
+      ]
+    }
+  ],
+  "reference_size_m": [
+    0.75,
+    0.675,
+    0.6
+  ],
+  "navigation_map": "../../maps/final_competition.yaml",
+  "navigation_map_sha256": "ef9a66b1d593399408ae2c940b11310d5452c543e5803cbb44d3f03e8853d82c",
+  "truth_map": "environment.yaml",
+  "known_boxes": 4,
+  "added_boxes": 2,
+  "offline_circle_radius_m": 0.37,
+  "offline_circle_route_exists": true
+}

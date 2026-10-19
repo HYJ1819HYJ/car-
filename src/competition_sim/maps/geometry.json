@@ -1,0 +1,140 @@
+{
+  "source_sha256": "a44b3c986f3a9c3f59460b1c1c590a3d2805ac6f098e8c7b2918270d2faf73d9",
+  "calibration": {
+    "yellow_square_m": 0.8,
+    "yellow_square_pixels": [
+      74,
+      73
+    ],
+    "metres_per_pixel_xy": [
+      0.010810810810810811,
+      0.010958904109589041
+    ]
+  },
+  "outer_bounds_m": [
+    8.8,
+    7.30958904109589
+  ],
+  "resolution_m": 0.025,
+  "wall_thickness_assumed_m": 0.04,
+  "note": "Schematic reconstruction. Dimensions/obstacle placement and wall thickness require field measurement. Raster wall width rounds up to 2 cells (0.05 m). Ground start/finish lines are not walls.",
+  "outline_pixels": [
+    [
+      9,
+      674
+    ],
+    [
+      823,
+      674
+    ],
+    [
+      823,
+      7
+    ],
+    [
+      437,
+      7
+    ],
+    [
+      437,
+      398
+    ],
+    [
+      9,
+      398
+    ]
+  ],
+  "wall_polylines_pixels": [
+    [
+      [
+        648,
+        146
+      ],
+      [
+        823,
+        146
+      ]
+    ],
+    [
+      [
+        437,
+        398
+      ],
+      [
+        495,
+        488
+      ],
+      [
+        630,
+        488
+      ]
+    ],
+    [
+      [
+        413,
+        605
+      ],
+      [
+        413,
+        674
+      ]
+    ]
+  ],
+  "box_rectangles_pixels": [
+    [
+      461,
+      212,
+      529,
+      271
+    ],
+    [
+      697,
+      283,
+      765,
+      341
+    ],
+    [
+      300,
+      587,
+      367,
+      645
+    ],
+    [
+      702,
+      587,
+      769,
+      645
+    ]
+  ],
+  "start": [
+    6.562162162162163,
+    6.920547945205479,
+    -1.5707963267948966
+  ],
+  "finish": [
+    0.5,
+    2.558904109589041,
+    3.141592653589793
+  ],
+  "start_square_m": [
+    [
+      6.162162162162162,
+      6.52054794520548
+    ],
+    [
+      6.962162162162162,
+      7.32054794520548
+    ]
+  ],
+  "finish_square_m": [
+    [
+      0.0,
+      2.158904109589041
+    ],
+    [
+      0.8,
+      2.958904109589041
+    ]
+  ],
+  "finish_is_movable": true
+}

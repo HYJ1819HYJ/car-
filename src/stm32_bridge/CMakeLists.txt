@@ -216,6 +216,8 @@ target_link_libraries(scan_self_filter_node ${catkin_LIBRARIES})
 # catkin_add_nosetests(test)
 
 if(CATKIN_ENABLE_TESTING)
+  find_package(rostest REQUIRED)
+  add_rostest(test/scan_self_filter.test DEPENDENCIES scan_self_filter_node)
   catkin_add_gtest(protocol_test test/protocol_test.cpp)
   if(TARGET protocol_test)
     target_link_libraries(protocol_test stm32_bridge_protocol ${catkin_LIBRARIES})

@@ -1,0 +1,9 @@
+image: competition_map_20261018_dynamic_startfix.pgm
+resolution: 0.025
+origin:
+- -2.105783
+- -4.273529
+- 0.0
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.196

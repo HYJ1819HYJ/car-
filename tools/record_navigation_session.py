@@ -22,7 +22,7 @@ def finish(signum,frame):
     global stop
     stop=True
 signal.signal(signal.SIGINT,finish);signal.signal(signal.SIGTERM,finish)
-params={ns:rospy.get_param(ns,{}) for ns in ['/move_base','/serial_bridge','/odom_publisher','/amcl','/richbeam_lidar','/scan_self_filter']}
+params={ns:rospy.get_param(ns,{}) for ns in ['/move_base','/serial_bridge','/odom_publisher','/amcl','/richbeam_lidar','/scan_self_filter','/corner_clearance/map_provider']}
 processes=[]
 for p in Path('/proc').iterdir():
     if p.name.isdigit():
@@ -46,7 +46,7 @@ for entry in processes:
                     image=Path(yaml.safe_load(path.read_text())['image'])
                     if not image.is_absolute():image=path.parent/image
                     if image.is_file():shutil.copy2(image,folder/image.name)
-topics=['/map','/map_metadata','/scan','/scan_raw','/scan_self_filtered_count','/tf','/tf_static','/odom','/wheel_encoder','/cmd_vel','/stm32_command_sent','/stm32_feedback_text','/control_source','/safety_stop','/safety_collision_prediction','/front_obstacle_distance','/rear_obstacle_distance','/nearest_obstacle_radius','/joystick_lb_pressed','/move_base/status','/move_base/goal','/move_base/current_goal','/move_base_simple/goal','/move_base/result','/move_base/feedback','/move_base/recovery_status','/move_base/GlobalPlanner/plan','/move_base/NavfnROS/plan','/move_base/TebLocalPlannerROS/global_plan','/move_base/TebLocalPlannerROS/local_plan','/move_base/global_costmap/costmap','/move_base/global_costmap/costmap_updates','/move_base/global_costmap/footprint','/move_base/local_costmap/costmap','/move_base/local_costmap/costmap_updates','/move_base/local_costmap/footprint','/amcl_pose','/initialpose','/rosout_agg','/goal_reached','/goal_detected','/blue_target/observation']
+topics=['/map','/corner_clearance_map','/map_metadata','/scan','/scan_obstacles','/scan_raw','/scan_self_filtered_count','/tf','/tf_static','/odom','/wheel_encoder','/cmd_vel','/stm32_command_sent','/stm32_feedback_text','/control_source','/safety_stop','/safety_collision_prediction','/front_obstacle_distance','/rear_obstacle_distance','/nearest_obstacle_radius','/joystick_lb_pressed','/move_base/status','/move_base/goal','/move_base/current_goal','/move_base_simple/goal','/move_base/result','/move_base/feedback','/move_base/recovery_status','/move_base/GlobalPlanner/plan','/move_base/NavfnROS/plan','/move_base/TebLocalPlannerROS/global_plan','/move_base/TebLocalPlannerROS/local_plan','/move_base/global_costmap/costmap','/move_base/global_costmap/costmap_updates','/move_base/global_costmap/footprint','/move_base/local_costmap/costmap','/move_base/local_costmap/costmap_updates','/move_base/local_costmap/footprint','/amcl_pose','/initialpose','/rosout_agg','/goal_reached','/goal_detected','/blue_target/observation']
 topics.extend(['/move_base/SmoothGlobalPlanner/plan',
                '/move_base/SmoothGlobalPlanner/raw_plan',
                '/move_base/SmoothGlobalPlanner/diagnostics'])

@@ -1,4 +1,6 @@
-# Add only the selected divider tip/corner mask. No layer may clear obstacles.
+# Add only the map-specific corner mask. It retains real corner cells and their
+# extra 5 cm band even when the live laser cannot see behind the chassis.
+# Maximum merge prevents live ray clearing/footprint clearing from erasing it.
 global_costmap:
   corner_clearance_layer:
     map_topic: /corner_clearance_map

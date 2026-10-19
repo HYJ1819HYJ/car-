@@ -1,0 +1,10 @@
+<launch>
+  <node pkg="stm32_bridge" type="scan_self_filter_node" name="scan_filter_under_test" required="true">
+    <param name="input_topic" value="/filter_test/raw"/>
+    <param name="output_topic" value="/filter_test/slam"/>
+    <param name="obstacle_output_topic" value="/filter_test/obstacles"/>
+    <param name="padding" value="0.0"/>
+  </node>
+  <test pkg="stm32_bridge" type="scan_self_filter_test.py"
+        test-name="scan_self_filter_observation_contract" time-limit="20"/>
+</launch>

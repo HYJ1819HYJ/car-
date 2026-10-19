@@ -1,0 +1,9 @@
+image: competition_map_20261018_clean.pgm
+resolution: 0.025
+origin:
+- -3.016832
+- -3.965343
+- 0.0
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.196

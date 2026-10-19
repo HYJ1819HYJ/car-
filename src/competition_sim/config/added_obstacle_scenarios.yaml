@@ -1,0 +1,29 @@
+# The first four boxes stay in the saved navigation map. These two boxes
+# are placed AFTER mapping, before navigation; all coordinates are metres.
+reference_obstacle_index: 0
+height_m: 0.60
+scenarios:
+  01_open:
+    title: 开阔区新增箱体
+    expected: reach_goal
+    centers: [[5.50, 6.30], [8.15, 2.60]]
+  02_upper_reroute:
+    title: 上半场改道
+    expected: reach_goal
+    centers: [[6.10, 4.65], [8.10, 1.80]]
+  03_lower_reroute:
+    title: 下方横向通道改道
+    expected: reach_goal
+    centers: [[2.60, 1.50], [5.80, 3.30]]
+  04_divider_detour:
+    title: 中间隔板出口绕行
+    expected: reach_goal
+    centers: [[7.35, 2.45], [5.30, 0.55]]
+  05_finish_approach:
+    title: 终点前绕行
+    expected: reach_goal
+    centers: [[1.75, 2.35], [6.15, 4.30]]
+  06_blocked_exit:
+    title: 出口封堵安全停车
+    expected: safe_stop
+    centers: [[5.22, 5.75], [6.25, 5.75]]

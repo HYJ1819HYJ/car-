@@ -1,0 +1,101 @@
+{
+  "id": "06_blocked_exit",
+  "title": "出口封堵安全停车",
+  "expected": "safe_stop",
+  "centers": [
+    [
+      5.22,
+      5.75
+    ],
+    [
+      6.25,
+      5.75
+    ]
+  ],
+  "boxes": [
+    {
+      "id": 1,
+      "center": [
+        5.22,
+        5.75
+      ],
+      "size": [
+        0.75,
+        0.675,
+        0.6
+      ],
+      "yaw": 0.0,
+      "corners": [
+        [
+          4.845,
+          5.4125
+        ],
+        [
+          5.595,
+          5.4125
+        ],
+        [
+          5.595,
+          6.0875
+        ],
+        [
+          4.845,
+          6.0875
+        ]
+      ],
+      "color": [
+        1,
+        0.4,
+        0.05
+      ]
+    },
+    {
+      "id": 2,
+      "center": [
+        6.25,
+        5.75
+      ],
+      "size": [
+        0.75,
+        0.675,
+        0.6
+      ],
+      "yaw": 0.0,
+      "corners": [
+        [
+          5.875,
+          5.4125
+        ],
+        [
+          6.625,
+          5.4125
+        ],
+        [
+          6.625,
+          6.0875
+        ],
+        [
+          5.875,
+          6.0875
+        ]
+      ],
+      "color": [
+        0.65,
+        0.1,
+        0.85
+      ]
+    }
+  ],
+  "reference_size_m": [
+    0.75,
+    0.675,
+    0.6
+  ],
+  "navigation_map": "../../maps/final_competition.yaml",
+  "navigation_map_sha256": "ef9a66b1d593399408ae2c940b11310d5452c543e5803cbb44d3f03e8853d82c",
+  "truth_map": "environment.yaml",
+  "known_boxes": 4,
+  "added_boxes": 2,
+  "offline_circle_radius_m": 0.37,
+  "offline_circle_route_exists": false
+}

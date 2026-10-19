@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>competition_sim</name>
+  <version>0.1.0</version>
+  <description>Isolated schematic competition map and Stage navigation for xiaoche.</description>
+  <maintainer email="asuka@example.com">asuka</maintainer>
+  <license>BSD-3-Clause</license>
+  <buildtool_depend>catkin</buildtool_depend>
+  <depend>roscpp</depend>
+  <build_depend>visualization_msgs</build_depend>
+  <build_export_depend>visualization_msgs</build_export_depend>
+  <build_depend>geometry_msgs</build_depend>
+  <build_depend>sensor_msgs</build_depend>
+  <build_depend>std_msgs</build_depend>
+  <build_depend>stm32_bridge</build_depend>
+  <exec_depend>stage_ros</exec_depend>
+  <exec_depend>maze_bridge</exec_depend>
+  <exec_depend>rospy</exec_depend>
+  <exec_depend>actionlib</exec_depend>
+  <exec_depend>move_base_msgs</exec_depend>
+  <exec_depend>visualization_msgs</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>python3-pil</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
+  <exec_depend>python3-rospkg</exec_depend>
+</package>
