@@ -29,7 +29,11 @@ def main():
     scenario = json.loads(Path(rospy.get_param('~scenario_file')).read_text())
     footprint = np.asarray(rospy.get_param('/robot_geometry/footprint'), dtype=float)
     image = np.asarray(Image.open(pkg / 'maps/final_competition.pgm'))
+    saved_image = np.asarray(Image.open(pkg / 'maps/mapping_before_move.pgm'))
     config = yaml.safe_load((pkg / 'maps/final_competition.yaml').read_text())
+    movable_mask=np.asarray(Image.open(pkg / 'maps/movable_prior_mask.png'))
+    saved_occupancy=np.flipud(np.where(saved_image==0,100,np.where(saved_image==254,0,-1)))
+    mutable=np.flipud(movable_mask)>0
     origin = np.asarray(config['origin'][:2])
     resolution = config['resolution']
     lock = threading.RLock()
@@ -40,18 +44,28 @@ def main():
               'distance_m': 0.0, 'trace': [], 'goal': geometry['finish']}
     report.update({'scenario':scenario['id'],'expected':scenario['expected'],
                    'base_navigation_map_matches':False,
+                   'semantics':scenario['semantics'],'mapped_boxes':scenario['mapped_boxes'],
+                   'physical_boxes':scenario['physical_boxes'],'map_reconciliation':None,
+                   'active_fixed_and_unknown_unchanged':False,'active_prior_cleared_cells':0,
+                   'prior_costmap_nonlethal_cells_max':0,
                    'added_collision_samples':0,'min_added_clearance_m':None,
                    'added_boxes':scenario['boxes'],
                    'laser_frames_seen':{str(b['id']):0 for b in scenario['boxes']},
                    'costmap_frames_seen':{str(b['id']):0 for b in scenario['boxes']}})
     last_scan_check = [0.0]
     def map_check(msg):
-        expected = np.flipud(np.where(image==0,100,np.where(image==254,0,-1))).ravel()
+        expected = np.flipud(np.where(saved_image==0,100,np.where(saved_image==254,0,-1))).ravel()
         matches = (msg.info.width==image.shape[1] and msg.info.height==image.shape[0]
                    and abs(msg.info.resolution-resolution)<1e-8
                    and np.array_equal(np.asarray(msg.data),expected))
         with lock:
             report['base_navigation_map_matches']=bool(matches)
+    def active_map_check(msg):
+        actual=np.asarray(msg.data).reshape(msg.info.height,msg.info.width)
+        with lock:
+            report['active_fixed_and_unknown_unchanged']=bool(actual.shape==saved_occupancy.shape and
+                np.array_equal(actual[~mutable],saved_occupancy[~mutable]))
+            report['active_prior_cleared_cells']=int(np.sum(actual[mutable]==0))
     def scan_check(msg):
         if report['state'] in ('SUCCEEDED','FAILED'):
             return
@@ -79,6 +93,10 @@ def main():
             return
         grid=np.asarray(msg.data).reshape(msg.info.height,msg.info.width)
         with lock:
+            if (grid.shape==mutable.shape and abs(msg.info.resolution-resolution)<1e-8 and
+                abs(msg.info.origin.position.x-config['origin'][0])<1e-6 and abs(msg.info.origin.position.y-config['origin'][1])<1e-6):
+                report['prior_costmap_nonlethal_cells_max']=max(report['prior_costmap_nonlethal_cells_max'],
+                    int(np.sum((grid[mutable]>=0)&(grid[mutable]<99))))
             for box in scenario['boxes']:
                 lo=np.asarray(box['center'])-np.asarray(box['size'][:2])/2-.08
                 hi=np.asarray(box['center'])+np.asarray(box['size'][:2])/2+.08
@@ -157,12 +175,16 @@ def main():
                 report[key] += 1
     rospy.Subscriber('/base_pose_ground_truth', Odometry, ground_truth, queue_size=10)
     rospy.Subscriber('/simulation/cmd_vel', Twist, command, queue_size=10)
+    def reconciliation(msg):
+        with lock: report['map_reconciliation']=json.loads(msg.data)
+    rospy.Subscriber('/simulation/map_reconciliation',String,reconciliation,queue_size=1)
     rospy.Subscriber('/map', OccupancyGrid, map_check, queue_size=1)
+    rospy.Subscriber('/navigation_map', OccupancyGrid, active_map_check, queue_size=1)
     rospy.Subscriber('/scan_raw', LaserScan, scan_check, queue_size=1)
     rospy.Subscriber('/move_base/global_costmap/costmap', OccupancyGrid, costmap_check, queue_size=1)
     rospy.Subscriber('/move_base/GlobalPlanner/plan', NavPath,
                      lambda m: plan(m,'global_plan_messages'), queue_size=1)
-    rospy.Subscriber('/move_base/TebLocalPlannerROS/local_plan', NavPath,
+    rospy.Subscriber('/move_base/DWAPlannerROS/local_plan', NavPath,
                      lambda m: plan(m,'local_plan_messages'), queue_size=1)
     status = rospy.Publisher('/simulation/demo_status', String, queue_size=1, latch=True)
     client = actionlib.SimpleActionClient('/move_base',MoveBaseAction)

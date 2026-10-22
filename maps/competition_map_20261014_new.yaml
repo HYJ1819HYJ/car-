@@ -1,0 +1,6 @@
+image: /workspace/xiaoche/maps/competition_map_20261014_new.pgm
+resolution: 0.025000
+origin: [-2.652043, -4.010777, 0.000000]
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.196

@@ -1,5 +1,16 @@
 # 项目变更记录
 
+## 2026-10-22：asuka_dwa 局部规划切换
+
+- 实车 `navigation_stack.launch` 和 Stage `navigation.launch` 统一启用 `dwa_local_planner/DWAPlannerROS`，加载 DWA 配置；`max_nav_v` 同时覆盖 `max_vel_x/max_vel_trans`，`max_nav_w` 覆盖 `max_vel_theta`。
+- 删除 ForwardTeb 包装器、TEB 配置及编译/安装依赖，移除 `forward_only_local_planner` 参数；DWA 使用 `min_vel_x=0` 禁止自主倒车，底盘安全层保持原有保护。
+- 保留 SmoothGlobalPlanner、24 点 STL 轮廓、代价地图与拐角/墙末端保护，更新 RViz、仿真统计和录包的局部规划话题。轮廓工具仅输出共享车体及两张 costmap 的多边形。
+- Noetic 容器 Release 编译、现有 GTest/扫描过滤测试、DWA 参数回归检查通过。独立 Stage master 11329 以 0.10 m/s、0.25 rad/s 完成短距离前进及原地转向目标，70 条局部路径，502 帧真值检查无碰撞、无倒车指令。
+- 本次结果不覆盖完整迷宫及实车验收。配置与启动见 [DWA 切换说明](docs/DWA切换_2026-10-22.md)。
+- 仿真按用户要求默认采用线速度上限 3.0 m/s、角速度上限 1.0 rad/s：DWA 与安全门共用启动参数，所有 Stage 世界及生成模板同步支持该上限；实车默认保持 0.50 m/s、0.75 rad/s。安全门保留完整车体、近障减速和超时停车，扩展高速预测区域内的雷达点保留范围，超限时同比缩放线/角速度。4 项参数检查及独立 ROS 安全门测试通过；3/1 整场通行仍待验证。
+- 按用户要求将 `twirling_scale` 从 0 增至 50，增加所有候选的角速度惩罚；保留速度上限与碰撞约束。卡住位置的静态快照复算中，0～25 仍选 `v=0,w=0.01483`，50～1000 选 `v=0.001437,w=0`；该修改消除了这份快照中的小转向选择，但仍可能缓慢爬行，完整过弯尚待闭环验证。
+- 保存分支时保留最新参数：`goal_distance_bias=15.0`、`occdist_scale=0.30`、`twirling_scale=1.0`。前文权重 50 的对照为阶段测试记录，不代表最终保存值；最新组合尚未完成整段过弯验证。
+
 ## 2026-10-19：自动墙体保护、箱子换位避障与比赛场地仿真
 
 ### 对比范围

@@ -79,7 +79,6 @@ def main():
         'move_base': {
             'global_costmap': {'footprint': polygon},
             'local_costmap': {'footprint': polygon},
-            'TebLocalPlannerROS': {'footprint_model': {'type': 'polygon', 'vertices': polygon}},
         },
     }
     report = {'source': str(args.stl), 'sha256': hashlib.sha256(args.stl.read_bytes()).hexdigest(),

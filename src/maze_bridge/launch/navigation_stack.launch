@@ -8,14 +8,13 @@
        需要先安装: sudo apt-get install ros-noetic-gmapping
        ros-noetic-amcl ros-noetic-map-server
        ros-noetic-move-base ros-noetic-dwa-local-planner
-       ros-noetic-teb-local-planner ros-noetic-global-planner
+       ros-noetic-global-planner
        ros-noetic-robot-pose-ekf
        ============================================ -->
 
   <!-- 参数 -->
   <arg name="mode" default="navigation"/>   <!-- explore 或 navigation -->
   <arg name="smooth_global_plan" default="true"/>
-  <arg name="forward_only_local_planner" default="true"/>
   <!-- 旧地图生成于雷达时间戳修复之前，必须重建 v2 地图。 -->
   <arg name="map_file" default="$(find maze_bridge)/../../maps/competition_map_v3.yaml"/>
   <!-- Prepare a source-matched mask automatically before costmaps can use it. -->
@@ -332,11 +331,11 @@
     <!-- Localization must be able to converge before a blocked robot moves. -->
     <node pkg="maze_bridge" type="stationary_amcl_update.py" name="stationary_amcl_update" output="screen"/>
 
-    <!-- 平滑全局参考提前入弯；TEB处理速度、角加速度和近场避障。
+    <!-- 平滑全局参考提前入弯；DWA采样前进/原地转向轨迹并检查近场碰撞。
          差速车在确有需要且可行时仍可进行安全的原地朝向调整。 -->
     <node pkg="move_base" type="move_base" name="move_base" output="screen" clear_params="true">
       <param name="base_global_planner" value="$(eval 'maze_smooth_planner/SmoothGlobalPlanner' if arg('smooth_global_plan') else 'global_planner/GlobalPlanner')"/>
-      <param name="base_local_planner" value="$(eval 'maze_smooth_planner/ForwardTebLocalPlanner' if arg('forward_only_local_planner') else 'teb_local_planner/TebLocalPlannerROS')"/>
+      <param name="base_local_planner" value="dwa_local_planner/DWAPlannerROS"/>
       <!-- Planning previews must use the same occupied space as navigation;
            the upstream service otherwise clears a window around the robot. -->
       <param name="make_plan_clear_costmap" value="false"/>
@@ -364,7 +363,7 @@
       <param name="clear_dynamic_obstacles/invert_area_to_clear" value="false"/>
       <param name="clear_dynamic_obstacles/affected_maps" value="both"/>
       <rosparam param="clear_dynamic_obstacles/layer_names">[obstacle_layer]</rosparam>
-      <!-- 带障碍代价的全局选路，避免贴内侧切角；转向运动学由TEB处理。 -->
+      <!-- 带障碍代价的全局选路，避免贴内侧切角；速度与转向由DWA局部采样处理。 -->
       <rosparam file="$(find maze_bridge)/launch/global_planner_params.yaml" command="load"/>
       <rosparam if="$(arg smooth_global_plan)" file="$(find maze_bridge)/launch/smooth_global_planner_params.yaml" command="load"/>
 
@@ -374,11 +373,11 @@
       <rosparam file="$(find maze_bridge)/launch/local_costmap_params.yaml" command="load"/>
       <rosparam file="$(find maze_bridge)/launch/global_costmap_params.yaml" command="load"/>
       <rosparam if="$(arg corner_clearance)" file="$(find maze_bridge)/launch/corner_clearance_costmap_params.yaml" command="load"/>
-      <rosparam file="$(find maze_bridge)/launch/teb_local_planner_params.yaml" command="load"/>
-      <rosparam if="$(arg smooth_global_plan)" file="$(find maze_bridge)/launch/smooth_teb_params.yaml" command="load"/>
+      <rosparam file="$(find maze_bridge)/launch/dwa_local_planner_params.yaml" command="load"/>
       <!-- Explicit startup limits also apply before the first goal is sent. -->
-      <param name="TebLocalPlannerROS/max_vel_x" value="$(arg max_nav_v)"/>
-      <param name="TebLocalPlannerROS/max_vel_theta" value="$(arg max_nav_w)"/>
+      <param name="DWAPlannerROS/max_vel_x" value="$(arg max_nav_v)"/>
+      <param name="DWAPlannerROS/max_vel_trans" value="$(arg max_nav_v)"/>
+      <param name="DWAPlannerROS/max_vel_theta" value="$(arg max_nav_w)"/>
     </node>
 
     <!-- 加载地图 -->

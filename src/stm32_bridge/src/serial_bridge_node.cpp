@@ -402,7 +402,7 @@ private:
           safety_stopped = true;
           // A joystick operator may explicitly keep a safe turn when blocked.
           // Autonomous motion must stop the entire rejected arc: replacing it
-          // with a spin executes a different trajectory from the TEB plan.
+          // with a spin executes a different trajectory from the local plan.
           const bool turn_only_safe =
                                       control_source.compare(0, 8, "joystick") == 0 &&
                                       std::fabs(w) > 1e-3 &&

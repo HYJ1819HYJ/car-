@@ -1,11 +1,11 @@
-# Cost-aware global route. This is a 2-D position search; TEB below is
-# responsible for footprint orientation, turn speed/acceleration and time.
+# Cost-aware 2-D global route. SmoothGlobalPlanner checks footprint orientation;
+# DWA samples local velocities using the local costmap footprint.
 GlobalPlanner:
   allow_unknown: false
   default_tolerance: 0.05
   use_dijkstra: true
   # Linear potentials and integer-cell traceback avoid gradient-path folds
-  # observed in navigation_20261007_162643. TEB smooths the grid reference.
+  # observed in navigation_20261007_162643. SmoothGlobalPlanner smooths the grid reference.
   use_quadratic: false
   use_grid_path: true
   old_navfn_behavior: true
@@ -15,6 +15,6 @@ GlobalPlanner:
   # the same value, hiding the wider corridor around the inner corner.
   cost_factor: 1.0
   publish_potential: false
-  # Tangent headings seed TEB; this is not a heading-aware global search.
+  # Tangent headings seed the local planner; this is not a heading-aware global search.
   orientation_mode: 1
   orientation_window_size: 3

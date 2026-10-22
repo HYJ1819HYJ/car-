@@ -1,6 +1,8 @@
-# dwa_local_planner_params.yaml
+# DWA for the forward-only differential-drive chassis.
+# Uses local_costmap/footprint (the shared STL polygon); no separate DWA body model.
 
 DWAPlannerROS:
+  odom_topic: /odom
   # 加速度限制
   acc_lim_x: 0.50
   acc_lim_y: 0.0       # 差速小车 Y方向不能移动
@@ -41,10 +43,13 @@ DWAPlannerROS:
   # 允许为绕开临时行人适度偏离原全局线，同时保持向目标推进。
   # footprint负责硬碰撞，occdist负责在多条可行轨迹中选择更安全的一条。
   path_distance_bias: 40.0
-  goal_distance_bias: 16.0
-  occdist_scale: 0.10
+  goal_distance_bias: 15.0
+  occdist_scale: 0.30
   forward_point_distance: 0.24
-  twirling_scale: 0.0
+  # Add twirling_scale * abs(w), including forward turns. The earlier snapshot
+  # comparison at weight 50 is recorded in the changelog; the value below
+  # preserves the latest tuning and does not guarantee forward progress.
+  twirling_scale: 1.0
   oscillation_reset_dist: 0.05
   oscillation_reset_angle: 0.20
 
@@ -53,11 +58,10 @@ DWAPlannerROS:
   scaling_speed: 0.12
   max_scaling_factor: 0.20
   prune_plan: true
-  penalize_negative_x: true
   restore_defaults: false
 
-  # 恢复行为
+  # 动态窗口采样与诊断发布（恢复行为由 move_base 单独配置）
   use_dwa: true
-  publish_traj_pc: true
-  publish_cost_grid_pc: true
+  publish_traj_pc: false
+  publish_cost_grid_pc: false
   global_frame_id: odom

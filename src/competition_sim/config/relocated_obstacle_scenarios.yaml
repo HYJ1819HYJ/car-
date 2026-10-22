@@ -1,0 +1,57 @@
+# 同两个箱体：mapped_centers 为建图时位置，scenarios.centers 为导航前搬移后的位置。
+reference_obstacle_index: 0
+height_m: 0.6
+scenarios:
+  01_open:
+    title: 开阔区搬移
+    expected: reach_goal
+    centers:
+    - - 5.2
+      - 5.55
+    - - 8.15
+      - 1.8
+  02_upper_reroute:
+    title: 上半场搬移改道
+    expected: reach_goal
+    centers:
+    - - 6.1
+      - 4.65
+    - - 8.1
+      - 1.8
+  03_lower_reroute:
+    title: 下方通道搬移改道
+    expected: reach_goal
+    centers:
+    - - 2.6
+      - 1.5
+    - - 5.8
+      - 3.3
+  04_divider_detour:
+    title: 隔板出口搬移绕行
+    expected: reach_goal
+    centers:
+    - - 7.35
+      - 2.45
+    - - 5.3
+      - 0.55
+  05_finish_approach:
+    title: 终点前搬移绕行
+    expected: reach_goal
+    centers:
+    - - 1.75
+      - 2.35
+    - - 6.15
+      - 4.3
+  06_blocked_exit:
+    title: 搬移后出口封堵
+    expected: safe_stop
+    centers:
+    - - 5.22
+      - 5.75
+    - - 6.25
+      - 5.75
+mapped_centers:
+- - 5.5
+  - 6.3
+- - 8.15
+  - 2.6

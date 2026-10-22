@@ -2,15 +2,17 @@
   <arg name="show_rviz" default="true"/>
   <arg name="demo" default="true"/>
   <arg name="scenario" default="01_open"/>
-  <arg name="scenario_file" default="$(find competition_sim)/scenarios/$(arg scenario)/scenario.json"/>
+  <arg name="max_nav_v" default="3.0"/>
+  <arg name="max_nav_w" default="1.0"/>
+  <arg name="scenario_file" default="$(find competition_sim)/relocated_scenarios/$(arg scenario)/scenario.json"/>
   <arg name="corner_clearance" default="true"/>
   <arg name="wall_endpoint_clearance" default="true"/>
   <arg name="wall_endpoint_radius" default="0.05"/>
-  <arg name="report_file" default="$(find competition_sim)/../../outputs/added_obstacles_20261019/$(arg scenario)/result.json"/>
+  <arg name="report_file" default="$(find competition_sim)/../../outputs/relocated_obstacles_20261019/$(arg scenario)/result.json"/>
   <param name="use_sim_time" value="true"/>
   <param name="competition_simulation" value="true"/>
   <node pkg="stage_ros" type="stageros" name="competition_stage" required="true" output="screen"
-        args="$(find competition_sim)/scenarios/$(arg scenario)/world.world">
+        args="$(find competition_sim)/relocated_scenarios/$(arg scenario)/world.world">
     <remap from="base_scan" to="/scan_raw"/>
     <remap from="cmd_vel" to="/simulation/cmd_vel"/>
   </node>
@@ -21,7 +23,11 @@
     <param name="padding" value="0.0"/>
   </node>
   <node pkg="map_server" type="map_server" name="map_server" required="true"
-        args="$(find competition_sim)/maps/final_competition.yaml"/>
+        args="$(find competition_sim)/maps/mapping_before_move.yaml"/>
+  <node pkg="competition_sim" type="reconcile_prior_map.py" name="reconcile_prior_map" required="true" output="screen">
+    <param name="map_file" value="$(find competition_sim)/maps/mapping_before_move.yaml"/>
+    <param name="movable_mask" value="$(find competition_sim)/maps/movable_prior_mask.png"/>
+  </node>
   <node pkg="amcl" type="amcl" name="amcl" output="screen">
     <param name="base_frame_id" value="base_footprint"/>
     <param name="odom_frame_id" value="odom"/>
@@ -65,7 +71,7 @@
   </group>
   <node pkg="move_base" type="move_base" name="move_base" output="screen" required="true" clear_params="true">
     <param name="base_global_planner" value="maze_smooth_planner/SmoothGlobalPlanner"/>
-    <param name="base_local_planner" value="maze_smooth_planner/ForwardTebLocalPlanner"/>
+    <param name="base_local_planner" value="dwa_local_planner/DWAPlannerROS"/>
     <param name="controller_frequency" value="12"/>
     <param name="planner_frequency" value="5"/>
     <param name="controller_patience" value="45"/>
@@ -83,11 +89,20 @@
     <rosparam file="$(find maze_bridge)/launch/global_costmap_params.yaml"/>
     <rosparam file="$(find maze_bridge)/launch/local_costmap_params.yaml"/>
     <rosparam if="$(arg corner_clearance)" file="$(find maze_bridge)/launch/corner_clearance_costmap_params.yaml"/>
-    <rosparam file="$(find maze_bridge)/launch/teb_local_planner_params.yaml"/>
-    <rosparam file="$(find maze_bridge)/launch/smooth_teb_params.yaml"/>
+    <rosparam file="$(find maze_bridge)/launch/dwa_local_planner_params.yaml"/>
+    <!-- Static prior changes only after laser-confirmed clearing of movable cells. -->
+    <param name="global_costmap/static_layer/map_topic" value="/navigation_map"/>
+    <param name="global_costmap/static_layer/first_map_only" value="false"/>
+    <param name="global_costmap/static_layer/subscribe_to_updates" value="false"/>
+    <param name="DWAPlannerROS/max_vel_x" value="$(arg max_nav_v)"/>
+    <param name="DWAPlannerROS/max_vel_trans" value="$(arg max_nav_v)"/>
+    <param name="DWAPlannerROS/max_vel_theta" value="$(arg max_nav_w)"/>
     <remap from="cmd_vel" to="/simulation/nav_cmd_vel"/>
   </node>
-  <node pkg="competition_sim" type="simulation_safety_gate" name="simulation_safety_gate" required="true" output="screen"/>
+  <node pkg="competition_sim" type="simulation_safety_gate" name="simulation_safety_gate" required="true" output="screen">
+    <param name="max_vel_x" value="$(arg max_nav_v)"/>
+    <param name="max_vel_theta" value="$(arg max_nav_w)"/>
+  </node>
   <rosparam file="$(find maze_bridge)/config/footprint_stl.yaml"/>
   <node pkg="competition_sim" type="scene_markers.py" name="competition_scene">
     <param name="scenario_file" value="$(arg scenario_file)"/>

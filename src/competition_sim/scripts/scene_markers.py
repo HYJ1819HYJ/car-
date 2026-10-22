@@ -59,8 +59,18 @@ def main():
         m.pose.position.x,m.pose.position.y = box['center']
         m.pose.position.y += box['size'][1]/2+.15
         m.pose.position.z,m.scale.z = .1,.13
-        m.text = 'Added box '+str(box['id'])
+        m.text = 'Relocated box '+str(box['id'])
         m.color.r,m.color.g,m.color.b = box['color']
+    for box in scenario.get('mapped_boxes',[]):
+        m = marker(Marker.LINE_STRIP)
+        m.scale.x = .02
+        m.color.r,m.color.g,m.color.b = 1,.1,.1
+        m.points = [Point(x,y,.035) for x,y in box['corners']+[box['corners'][0]]]
+        m = marker(Marker.TEXT_VIEW_FACING)
+        m.pose.position.x,m.pose.position.y = box['center']
+        m.pose.position.z,m.scale.z = .04,.12
+        m.text = 'Old position '+str(box['id'])
+        m.color.r,m.color.g,m.color.b = 1,.1,.1
     rate = rospy.Rate(1)
     while not rospy.is_shutdown():
         for m in markers:

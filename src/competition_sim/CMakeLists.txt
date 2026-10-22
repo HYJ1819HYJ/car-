@@ -8,7 +8,13 @@ add_executable(simulation_safety_gate src/safety_gate.cpp)
 target_compile_features(simulation_safety_gate PRIVATE cxx_std_14)
 target_link_libraries(simulation_safety_gate ${catkin_LIBRARIES})
 install(TARGETS simulation_safety_gate RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
-catkin_install_python(PROGRAMS scripts/scene_markers.py scripts/demo_navigation.py
+catkin_install_python(PROGRAMS scripts/scene_markers.py scripts/demo_navigation.py scripts/reconcile_prior_map.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
-install(DIRECTORY launch maps worlds rviz config scenarios DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})
+install(DIRECTORY launch maps worlds rviz config scenarios relocated_scenarios DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})
 install(FILES ../../models/wheel_hub_car_mm.stl DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/models)
+if(CATKIN_ENABLE_TESTING)
+  find_package(rostest REQUIRED)
+  catkin_install_python(PROGRAMS test/safety_gate_limits_test.py
+    DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+  add_rostest(test/safety_gate_limits.test)
+endif()

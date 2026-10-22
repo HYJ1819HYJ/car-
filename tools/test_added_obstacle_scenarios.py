@@ -122,4 +122,4 @@ def main():
 
 
 if __name__=='__main__':
-    main()
+    raise SystemExit('此脚本对应旧的新增障碍物语义，已禁用。请运行 tools/test_relocated_obstacle_scenarios.py。')

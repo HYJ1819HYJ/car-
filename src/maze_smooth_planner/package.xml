@@ -14,6 +14,5 @@
   <depend>geometry_msgs</depend>
   <depend>nav_msgs</depend>
   <depend>std_msgs</depend>
-  <depend>teb_local_planner</depend>
   <export><nav_core plugin="${prefix}/planner_plugin.xml"/></export>
 </package>

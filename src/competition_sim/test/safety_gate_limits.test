@@ -1,0 +1,12 @@
+<launch>
+  <rosparam file="$(find maze_bridge)/config/footprint_stl.yaml"/>
+  <node pkg="competition_sim" type="simulation_safety_gate" name="gate_under_test" required="true">
+    <param name="max_vel_x" value="3.0"/>
+    <param name="max_vel_theta" value="1.0"/>
+    <param name="input_topic" value="/gate_test/request"/>
+    <param name="output_topic" value="/gate_test/output"/>
+    <param name="scan_topic" value="/gate_test/scan"/>
+  </node>
+  <test pkg="competition_sim" type="safety_gate_limits_test.py"
+        test-name="simulation_gate_velocity_contract" time-limit="25"/>
+</launch>

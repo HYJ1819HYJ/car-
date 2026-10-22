@@ -69,7 +69,3 @@ move_base:
     footprint: *id001
   local_costmap:
     footprint: *id001
-  TebLocalPlannerROS:
-    footprint_model:
-      type: polygon
-      vertices: *id001

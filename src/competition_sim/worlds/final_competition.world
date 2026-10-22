@@ -20,7 +20,7 @@ position(
   drive "diff"
   localization "odom" localization_origin [0 0 0 0]
   odom_error [0.001 0.001 0 0.001]
-  velocity_bounds [0 0.50 0 0 0 0 -42.971835 42.971835]
+  velocity_bounds [0 3.0 0 0 0 0 -57.295780 57.295780]
   acceleration_bounds [-0.50 0.50 0 0 0 0 -85.943669 85.943669]
   block(
     points 24
