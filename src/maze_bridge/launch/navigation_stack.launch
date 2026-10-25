@@ -374,7 +374,7 @@
       <rosparam file="$(find maze_bridge)/launch/local_costmap_params.yaml" command="load"/>
       <rosparam file="$(find maze_bridge)/launch/global_costmap_params.yaml" command="load"/>
       <rosparam if="$(arg corner_clearance)" file="$(find maze_bridge)/launch/corner_clearance_costmap_params.yaml" command="load"/>
-      <rosparam file="$(find maze_bridge)/launch/teb_local_planner_params.yaml" command="load"/>
+      <rosparam file="$(find maze_bridge)/launch/teb_local_planner_params_v2.yaml" command="load"/>
       <rosparam if="$(arg smooth_global_plan)" file="$(find maze_bridge)/launch/smooth_teb_params.yaml" command="load"/>
       <!-- Explicit startup limits also apply before the first goal is sent. -->
       <param name="TebLocalPlannerROS/max_vel_x" value="$(arg max_nav_v)"/>

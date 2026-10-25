@@ -20,6 +20,18 @@ class SafetyGate {
     sweep_ = body_;
     sweep_.padding = 0.02;
     private_.param("prediction_time", horizon_, 0.8);
+    private_.param("max_vel_x", max_v_, 0.5);
+    private_.param("max_vel_theta", max_w_, 0.75);
+    if (!std::isfinite(max_v_) || max_v_ <= 0 ||
+        !std::isfinite(max_w_) || max_w_ <= 0 ||
+        !std::isfinite(horizon_) || horizon_ <= 0)
+      throw std::runtime_error("Simulation velocity limits and prediction time must be finite and positive");
+    double body_radius = 0;
+    for (const auto& vertex : body_.vertices)
+      body_radius = std::max(body_radius, std::hypot(vertex.x, vertex.y));
+    // Retain every return that can intersect the predicted swept body.
+    // At 3 m/s the old fixed 2 m filter truncated the 0.8 s prediction.
+    observation_radius_ = std::max(2.0, max_v_ * horizon_ + body_radius + sweep_.padding + 0.03);
     std::string input, output, scan;
     private_.param<std::string>("input_topic", input, "/simulation/nav_cmd_vel");
     private_.param<std::string>("output_topic", output, "/simulation/cmd_vel");
@@ -55,7 +67,7 @@ class SafetyGate {
       const double angle = message->angle_min+i*message->angle_increment;
       const stm32_bridge::SafetyPoint point{0.315+r*std::cos(angle), r*std::sin(angle)};
       if (stm32_bridge::pointInsideFootprint(point, {0,0}, 0, body_)) continue;
-      if (std::hypot(point.x, point.y)<2.0) points_.push_back(point);
+      if (std::hypot(point.x, point.y)<observation_radius_) points_.push_back(point);
       if (std::fabs(point.y) <= body_.half_width+sweep_.padding) {
         double rear, front;
         stm32_bridge::longitudinalBodyLimits(body_,point.y,&rear,&front);
@@ -77,9 +89,16 @@ class SafetyGate {
     else if (!std::isfinite(safe.linear.x) || !std::isfinite(safe.angular.z)) reject("invalid_command_stop");
     else if (safe.linear.x < -1e-6) reject("navigation_reverse_stop");
     else {
-      safe.linear.x=std::min(0.5,std::max(0.0,safe.linear.x));
+      safe.linear.x=std::max(0.0,safe.linear.x);
       safe.linear.y=safe.linear.z=safe.angular.x=safe.angular.y=0;
-      safe.angular.z=std::min(0.75,std::max(-0.75,safe.angular.z));
+      // Apply a common scale if a command exceeds either configured limit,
+      // preserving the planned curvature before the collision check.
+      double limit_scale = 1.0;
+      if (safe.linear.x > max_v_) limit_scale = std::min(limit_scale, max_v_ / safe.linear.x);
+      if (std::fabs(safe.angular.z) > max_w_)
+        limit_scale = std::min(limit_scale, max_w_ / std::fabs(safe.angular.z));
+      safe.linear.x *= limit_scale;
+      safe.angular.z *= limit_scale;
       if (safe.linear.x>1e-3 && front_<=0.08) reject("front_clearance_stop");
       else {
         if (safe.linear.x>1e-3 && front_<0.30) {
@@ -105,7 +124,7 @@ class SafetyGate {
   ros::Time command_stamp_,scan_stamp_;
   stm32_bridge::SafetyFootprint body_,sweep_;
   std::vector<stm32_bridge::SafetyPoint> points_;
-  double front_=std::numeric_limits<double>::infinity(),horizon_;
+  double front_=std::numeric_limits<double>::infinity(),horizon_,max_v_,max_w_,observation_radius_;
 };
 
 int main(int argc,char** argv) {

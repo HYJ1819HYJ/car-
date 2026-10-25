@@ -2,6 +2,8 @@
   <arg name="show_rviz" default="true"/>
   <arg name="demo" default="true"/>
   <arg name="scenario" default="01_open"/>
+  <arg name="max_nav_v" default="3.0"/>
+  <arg name="max_nav_w" default="1.0"/>
   <arg name="scenario_file" default="$(find competition_sim)/scenarios/$(arg scenario)/scenario.json"/>
   <arg name="corner_clearance" default="true"/>
   <arg name="wall_endpoint_clearance" default="true"/>
@@ -83,11 +85,16 @@
     <rosparam file="$(find maze_bridge)/launch/global_costmap_params.yaml"/>
     <rosparam file="$(find maze_bridge)/launch/local_costmap_params.yaml"/>
     <rosparam if="$(arg corner_clearance)" file="$(find maze_bridge)/launch/corner_clearance_costmap_params.yaml"/>
-    <rosparam file="$(find maze_bridge)/launch/teb_local_planner_params.yaml"/>
+    <rosparam file="$(find maze_bridge)/launch/teb_local_planner_params_v2.yaml"/>
     <rosparam file="$(find maze_bridge)/launch/smooth_teb_params.yaml"/>
+    <param name="TebLocalPlannerROS/max_vel_x" value="$(arg max_nav_v)"/>
+    <param name="TebLocalPlannerROS/max_vel_theta" value="$(arg max_nav_w)"/>
     <remap from="cmd_vel" to="/simulation/nav_cmd_vel"/>
   </node>
-  <node pkg="competition_sim" type="simulation_safety_gate" name="simulation_safety_gate" required="true" output="screen"/>
+  <node pkg="competition_sim" type="simulation_safety_gate" name="simulation_safety_gate" required="true" output="screen">
+    <param name="max_vel_x" value="$(arg max_nav_v)"/>
+    <param name="max_vel_theta" value="$(arg max_nav_w)"/>
+  </node>
   <rosparam file="$(find maze_bridge)/config/footprint_stl.yaml"/>
   <node pkg="competition_sim" type="scene_markers.py" name="competition_scene">
     <param name="scenario_file" value="$(arg scenario_file)"/>
