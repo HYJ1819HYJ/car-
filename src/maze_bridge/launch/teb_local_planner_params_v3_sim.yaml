@@ -1,0 +1,21 @@
+# Simulation-only tuning overlay. Load after v2 and smooth_teb_params.yaml,
+# before max_nav_v/max_nav_w. The hardware launch continues to use v2.
+# Keep the shared STL footprint, obstacle clearances, speed caps, feasibility
+# checks, optimizer iterations and independent safety gate unchanged.
+TebLocalPlannerROS:
+  # Extract a command over two trajectory intervals rather than only one.
+  # This parameter is read at startup by the installed TEB 0.9.1 release.
+  control_look_ahead_poses: 2
+
+  # Balance travel-time preference against velocity/acceleration penalties.
+  # These are optimizer costs, not a hard acceleration or jerk limiter.
+  weight_optimaltime: 2.0
+  weight_acc_lim_x: 2.0
+  weight_acc_lim_theta: 10.0
+  weight_max_vel_theta: 8.0
+
+  # Follow the footprint-checked smooth global reference over a slightly
+  # longer horizon. Both remain bounded by the existing local costmap.
+  max_global_plan_lookahead_dist: 1.8
+  global_plan_viapoint_sep: 0.30
+  weight_viapoint: 1.0

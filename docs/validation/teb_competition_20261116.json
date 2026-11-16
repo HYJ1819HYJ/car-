@@ -1,0 +1,491 @@
+{
+  "scope": "same competition floorplan, six fixed added-box placements; simulation only",
+  "baseline_commit": "4fa30b33a581e7a1d03067325c80598ed9b90061",
+  "caps": [
+    3.0,
+    1.0
+  ],
+  "complete_runs": 12,
+  "accepted_runs": 12,
+  "collision_samples": 0,
+  "reverse_commands": 0,
+  "comparisons": [
+    {
+      "scenario": "01_open",
+      "title": "开阔区新增箱体",
+      "expected": "reach_goal",
+      "v2": {
+        "state": "SUCCEEDED",
+        "accepted": true,
+        "elapsed_sim_s": 15.114,
+        "distance_m": 12.61967261660494,
+        "collision_samples": 0,
+        "reverse_commands": 0,
+        "stationary_final": true,
+        "final_actual_velocity": [
+          0.0,
+          0.0
+        ],
+        "static_clearance_m": 0.1599220335483551,
+        "added_clearance_m": 0.35634638158599236,
+        "goal_position_error_m": 0.057736442316548064,
+        "planner_angular_tv": 18.27510529522273,
+        "planner_angular_tv_per_s": 1.2969345891152315,
+        "max_command_gap_s": 0.0990000000000002,
+        "safety_reasons": {
+          "clear": 669,
+          "footprint_prediction_stop": 12,
+          "front_slow": 48,
+          "command_timeout_stop": 27
+        },
+        "pose_error_summary": {
+          "position_max_m": 0.040133513205153085,
+          "position_p95_m": 0.03567553254946495,
+          "position_last_m": 0.031214980380597952,
+          "yaw_max_rad": 0.00959493591392524,
+          "yaw_p95_rad": 0.008525441915423735
+        }
+      },
+      "v3": {
+        "state": "SUCCEEDED",
+        "accepted": true,
+        "elapsed_sim_s": 14.619,
+        "distance_m": 12.363515649824656,
+        "collision_samples": 0,
+        "reverse_commands": 0,
+        "stationary_final": true,
+        "final_actual_velocity": [
+          0.0,
+          0.0
+        ],
+        "static_clearance_m": 0.12492217868566513,
+        "added_clearance_m": 0.38160699601472586,
+        "goal_position_error_m": 0.0535178767750938,
+        "planner_angular_tv": 11.956187855629707,
+        "planner_angular_tv_per_s": 0.8793901041210435,
+        "max_command_gap_s": 0.0990000000000002,
+        "safety_reasons": {
+          "clear": 632,
+          "footprint_prediction_stop": 1,
+          "front_slow": 72,
+          "command_timeout_stop": 26
+        },
+        "pose_error_summary": {
+          "position_max_m": 0.039873512339668835,
+          "position_p95_m": 0.03863414232060571,
+          "position_last_m": 0.03275207098981765,
+          "yaw_max_rad": 0.009083054760168796,
+          "yaw_p95_rad": 0.008013072011261623
+        }
+      },
+      "time_reduction_percent": 3.275109170305679,
+      "angular_tv_reduction_percent": 34.57664039421344
+    },
+    {
+      "scenario": "02_upper_reroute",
+      "title": "上半场改道",
+      "expected": "reach_goal",
+      "v2": {
+        "state": "SUCCEEDED",
+        "accepted": true,
+        "elapsed_sim_s": 16.203,
+        "distance_m": 12.373855565271525,
+        "collision_samples": 0,
+        "reverse_commands": 0,
+        "stationary_final": true,
+        "final_actual_velocity": [
+          0.0,
+          0.0
+        ],
+        "static_clearance_m": 0.12992249429225922,
+        "added_clearance_m": 0.11120959396510366,
+        "goal_position_error_m": 0.0591744420045283,
+        "planner_angular_tv": 20.354968750964794,
+        "planner_angular_tv_per_s": 1.3409070323428718,
+        "max_command_gap_s": 0.0990000000000002,
+        "safety_reasons": {
+          "command_timeout_stop": 28,
+          "clear": 708,
+          "footprint_prediction_stop": 17,
+          "front_slow": 59
+        },
+        "pose_error_summary": {
+          "position_max_m": 0.03514401279350295,
+          "position_p95_m": 0.03151713509272581,
+          "position_last_m": 0.02873857316786932,
+          "yaw_max_rad": 0.010347072560897397,
+          "yaw_p95_rad": 0.01013102932516887
+        }
+      },
+      "v3": {
+        "state": "SUCCEEDED",
+        "accepted": true,
+        "elapsed_sim_s": 15.443999999999999,
+        "distance_m": 12.277941786836148,
+        "collision_samples": 0,
+        "reverse_commands": 0,
+        "stationary_final": true,
+        "final_actual_velocity": [
+          0.0,
+          0.0
+        ],
+        "static_clearance_m": 0.10492248833179474,
+        "added_clearance_m": 0.09854224845099165,
+        "goal_position_error_m": 0.055120285166886586,
+        "planner_angular_tv": 14.755511682010164,
+        "planner_angular_tv_per_s": 1.0302689346467089,
+        "max_command_gap_s": 0.0990000000000002,
+        "safety_reasons": {
+          "clear": 658,
+          "footprint_prediction_stop": 11,
+          "front_slow": 76,
+          "command_timeout_stop": 27
+        },
+        "pose_error_summary": {
+          "position_max_m": 0.04498208576989743,
+          "position_p95_m": 0.039990730411332706,
+          "position_last_m": 0.035332769625751215,
+          "yaw_max_rad": 0.01040833925260598,
+          "yaw_p95_rad": 0.00903511911128808
+        }
+      },
+      "time_reduction_percent": 4.684317718940944,
+      "angular_tv_reduction_percent": 27.509042816335562
+    },
+    {
+      "scenario": "03_lower_reroute",
+      "title": "下方横向通道改道",
+      "expected": "reach_goal",
+      "v2": {
+        "state": "SUCCEEDED",
+        "accepted": true,
+        "elapsed_sim_s": 15.278999999999998,
+        "distance_m": 12.333810807629606,
+        "collision_samples": 0,
+        "reverse_commands": 0,
+        "stationary_final": true,
+        "final_actual_velocity": [
+          0.0,
+          0.0
+        ],
+        "static_clearance_m": 0.16476745903491974,
+        "added_clearance_m": 0.11710485722506297,
+        "goal_position_error_m": 0.11047875926832727,
+        "planner_angular_tv": 18.493586669300903,
+        "planner_angular_tv_per_s": 1.2972493454896818,
+        "max_command_gap_s": 0.09900000000000109,
+        "safety_reasons": {
+          "clear": 687,
+          "footprint_prediction_stop": 33,
+          "front_slow": 18,
+          "command_timeout_stop": 26
+        },
+        "pose_error_summary": {
+          "position_max_m": 0.03957683408239485,
+          "position_p95_m": 0.0370039822462031,
+          "position_last_m": 0.017374203238603097,
+          "yaw_max_rad": 0.00824398603891985,
+          "yaw_p95_rad": 0.00722214940984536
+        }
+      },
+      "v3": {
+        "state": "SUCCEEDED",
+        "accepted": true,
+        "elapsed_sim_s": 14.783999999999999,
+        "distance_m": 12.147344082671744,
+        "collision_samples": 0,
+        "reverse_commands": 0,
+        "stationary_final": true,
+        "final_actual_velocity": [
+          0.0,
+          0.0
+        ],
+        "static_clearance_m": 0.12492217868566513,
+        "added_clearance_m": 0.09152750108796237,
+        "goal_position_error_m": 0.07917636232864936,
+        "planner_angular_tv": 13.826680163157569,
+        "planner_angular_tv_per_s": 1.0047729208020906,
+        "max_command_gap_s": 0.0990000000000002,
+        "safety_reasons": {
+          "command_timeout_stop": 28,
+          "clear": 663,
+          "footprint_prediction_stop": 27,
+          "front_slow": 23
+        },
+        "pose_error_summary": {
+          "position_max_m": 0.03670428305776154,
+          "position_p95_m": 0.034861798542063865,
+          "position_last_m": 0.029357057540715648,
+          "yaw_max_rad": 0.007218968597934694,
+          "yaw_p95_rad": 0.00688256822651806
+        }
+      },
+      "time_reduction_percent": 3.239740820734338,
+      "angular_tv_reduction_percent": 25.235269878126644
+    },
+    {
+      "scenario": "04_divider_detour",
+      "title": "中间隔板出口绕行",
+      "expected": "reach_goal",
+      "v2": {
+        "state": "SUCCEEDED",
+        "accepted": true,
+        "elapsed_sim_s": 18.051000000000002,
+        "distance_m": 14.26010082504243,
+        "collision_samples": 0,
+        "reverse_commands": 0,
+        "stationary_final": true,
+        "final_actual_velocity": [
+          0.0,
+          0.0
+        ],
+        "static_clearance_m": 0.16476745903491974,
+        "added_clearance_m": 0.13604623364712862,
+        "goal_position_error_m": 0.056051925883282845,
+        "planner_angular_tv": 24.192721318169912,
+        "planner_angular_tv_per_s": 1.4235199363442137,
+        "max_command_gap_s": 0.13200000000000145,
+        "safety_reasons": {
+          "command_timeout_stop": 28,
+          "clear": 803,
+          "footprint_prediction_stop": 27,
+          "front_slow": 46
+        },
+        "pose_error_summary": {
+          "position_max_m": 0.033763294824258605,
+          "position_p95_m": 0.031947750194117316,
+          "position_last_m": 0.0089885438958918,
+          "yaw_max_rad": 0.011799328929369857,
+          "yaw_p95_rad": 0.0101820480108734
+        }
+      },
+      "v3": {
+        "state": "SUCCEEDED",
+        "accepted": true,
+        "elapsed_sim_s": 17.952,
+        "distance_m": 14.082545050917552,
+        "collision_samples": 0,
+        "reverse_commands": 0,
+        "stationary_final": true,
+        "final_actual_velocity": [
+          0.0,
+          0.0
+        ],
+        "static_clearance_m": 0.14484481513500214,
+        "added_clearance_m": 0.09835990842897538,
+        "goal_position_error_m": 0.04700790616297341,
+        "planner_angular_tv": 18.496005571232367,
+        "planner_angular_tv_per_s": 1.0925633865693407,
+        "max_command_gap_s": 0.13199999999999967,
+        "safety_reasons": {
+          "clear": 795,
+          "footprint_prediction_stop": 9,
+          "front_slow": 67,
+          "command_timeout_stop": 26
+        },
+        "pose_error_summary": {
+          "position_max_m": 0.03143174523346175,
+          "position_p95_m": 0.030233173038297232,
+          "position_last_m": 0.021294248486424385,
+          "yaw_max_rad": 0.01054769130328248,
+          "yaw_p95_rad": 0.010126203489692375
+        }
+      },
+      "time_reduction_percent": 0.5484460694698323,
+      "angular_tv_reduction_percent": 23.547230061543488
+    },
+    {
+      "scenario": "05_finish_approach",
+      "title": "终点前绕行",
+      "expected": "reach_goal",
+      "v2": {
+        "state": "SUCCEEDED",
+        "accepted": true,
+        "elapsed_sim_s": 15.707999999999998,
+        "distance_m": 12.47604204219843,
+        "collision_samples": 0,
+        "reverse_commands": 0,
+        "stationary_final": true,
+        "final_actual_velocity": [
+          0.0,
+          0.0
+        ],
+        "static_clearance_m": 0.16476745903491974,
+        "added_clearance_m": 0.1270768859167009,
+        "goal_position_error_m": 0.06247917446907478,
+        "planner_angular_tv": 19.44658323125969,
+        "planner_angular_tv_per_s": 1.3242480920163222,
+        "max_command_gap_s": 0.13200000000000145,
+        "safety_reasons": {
+          "clear": 692,
+          "footprint_prediction_stop": 9,
+          "front_slow": 58,
+          "command_timeout_stop": 27
+        },
+        "pose_error_summary": {
+          "position_max_m": 0.037672595116114246,
+          "position_p95_m": 0.03590591593379726,
+          "position_last_m": 0.031474294897795366,
+          "yaw_max_rad": 0.010947718839017018,
+          "yaw_p95_rad": 0.008664498104270366
+        }
+      },
+      "v3": {
+        "state": "SUCCEEDED",
+        "accepted": true,
+        "elapsed_sim_s": 15.972000000000001,
+        "distance_m": 12.348442663058158,
+        "collision_samples": 0,
+        "reverse_commands": 0,
+        "stationary_final": true,
+        "final_actual_velocity": [
+          0.0,
+          0.0
+        ],
+        "static_clearance_m": 0.125,
+        "added_clearance_m": 0.07862375877110184,
+        "goal_position_error_m": 0.048174261360095616,
+        "planner_angular_tv": 15.039766792421446,
+        "planner_angular_tv_per_s": 1.006071763490631,
+        "max_command_gap_s": 0.0990000000000002,
+        "safety_reasons": {
+          "clear": 650,
+          "footprint_prediction_stop": 15,
+          "front_slow": 107,
+          "command_timeout_stop": 26
+        },
+        "pose_error_summary": {
+          "position_max_m": 0.04419153301845783,
+          "position_p95_m": 0.039302178712670874,
+          "position_last_m": 0.031558200036472625,
+          "yaw_max_rad": 0.011112914525876814,
+          "yaw_p95_rad": 0.009384404712134172
+        }
+      },
+      "time_reduction_percent": -1.6806722689075793,
+      "angular_tv_reduction_percent": 22.661134793871884
+    },
+    {
+      "scenario": "06_blocked_exit",
+      "title": "出口封堵安全停车",
+      "expected": "safe_stop",
+      "v2": {
+        "state": "FAILED",
+        "accepted": true,
+        "elapsed_sim_s": 31.218,
+        "distance_m": 0.0,
+        "collision_samples": 0,
+        "reverse_commands": 0,
+        "stationary_final": true,
+        "final_actual_velocity": [
+          0.0,
+          0.0
+        ],
+        "static_clearance_m": 0.25,
+        "added_clearance_m": 0.4847676496325688,
+        "goal_position_error_m": 7.46818231066723,
+        "planner_angular_tv": 0.0,
+        "planner_angular_tv_per_s": 0.0,
+        "max_command_gap_s": 30.162000000000003,
+        "safety_reasons": {
+          "clear": 51,
+          "command_timeout_stop": 1510
+        },
+        "pose_error_summary": {
+          "position_max_m": 0.011702746121290854,
+          "position_p95_m": 0.011702746121290854,
+          "position_last_m": 0.011702746121290854,
+          "yaw_max_rad": 0.008482482445204553,
+          "yaw_p95_rad": 0.008480101675258256
+        }
+      },
+      "v3": {
+        "state": "FAILED",
+        "accepted": true,
+        "elapsed_sim_s": 31.218000000000004,
+        "distance_m": 0.0,
+        "collision_samples": 0,
+        "reverse_commands": 0,
+        "stationary_final": true,
+        "final_actual_velocity": [
+          0.0,
+          0.0
+        ],
+        "static_clearance_m": 0.25,
+        "added_clearance_m": 0.4847676496325688,
+        "goal_position_error_m": 7.46818231066723,
+        "planner_angular_tv": 0.0,
+        "planner_angular_tv_per_s": 0.0,
+        "max_command_gap_s": 30.162,
+        "safety_reasons": {
+          "command_timeout_stop": 1510,
+          "clear": 52
+        },
+        "pose_error_summary": {
+          "position_max_m": 0.011702746121290854,
+          "position_p95_m": 0.011702746121290854,
+          "position_last_m": 0.011702746121290854,
+          "yaw_max_rad": 0.008482482445204553,
+          "yaw_p95_rad": 0.008480101675258256
+        }
+      }
+    }
+  ],
+  "successful_pair_total_time_reduction_percent": 1.9712525667351155,
+  "successful_pair_angular_tv_reduction_percent": 26.48672866097048,
+  "inputs_unchanged": true,
+  "limits": [
+    "One new run per configuration per layout; not a statistical guarantee.",
+    "Elapsed time includes about 1 s final stopping observation.",
+    "Angular total variation is an output metric, not proof of mechanical stability.",
+    "No physical vehicle or moving-box test."
+  ],
+  "profile_file": "src/maze_bridge/launch/teb_local_planner_params_v3_sim.yaml",
+  "profile_sha256": "a350ee693b13dc434a71e89e824aa562967b3ac2abee5a3e611dad41bdf525ac",
+  "profile_parameters": {
+    "control_look_ahead_poses": 2,
+    "weight_optimaltime": 2.0,
+    "weight_acc_lim_x": 2.0,
+    "weight_acc_lim_theta": 10.0,
+    "weight_max_vel_theta": 8.0,
+    "max_global_plan_lookahead_dist": 1.8,
+    "global_plan_viapoint_sep": 0.3,
+    "weight_viapoint": 1.0
+  },
+  "input_sha256": {
+    "src/competition_sim/maps/final_competition.yaml": "dc1586aebaa4787a31c4ae2b44d7b6f07b0879eec0bd9fc969006d4d338bcb77",
+    "src/competition_sim/maps/final_competition.pgm": "ef9a66b1d593399408ae2c940b11310d5452c543e5803cbb44d3f03e8853d82c",
+    "src/competition_sim/maps/geometry.json": "f12765e74c3b81735079f3691b1352d5032c2217701407e363e349d2dee179cb",
+    "src/maze_bridge/config/footprint_stl.yaml": "6864ec74e78ee578ada23d60b2730bae9fec8d77031c0925cbb09f91d55201eb",
+    "src/maze_bridge/launch/teb_local_planner_params_v1.yaml": "d1806d2a3eb4523f7e66c894991f803c598099793197fab5ff5ce15ae755b621",
+    "src/maze_bridge/launch/teb_local_planner_params_v2.yaml": "ab23df35f7ecf7a8e0e4ff293eddbc8a499839166b44cea9d7087842c0c1accd",
+    "src/maze_bridge/launch/teb_local_planner_params_v3_sim.yaml": "a350ee693b13dc434a71e89e824aa562967b3ac2abee5a3e611dad41bdf525ac",
+    "src/maze_bridge/launch/navigation_stack.launch": "32986f32952e09d6cc61f91d54639bd42c1c08964fc701ef531fb3d7b0889c22",
+    "src/competition_sim/src/safety_gate.cpp": "117d3b8a9fd399c1e45bea679f26226cd443a4875f5a71283e99d64d5448c982",
+    "src/competition_sim/scenarios/01_open/world.world": "24289d0e4647f3555c27b8155b86c967cc287d164660b874f59a16a16f12a552",
+    "src/competition_sim/scenarios/01_open/scenario.json": "d11418881acd8b52e201560f17fbea0e74a9f744343c1eb4d4cfd1c33eab6433",
+    "src/competition_sim/scenarios/01_open/environment.yaml": "de09d71ec3185c44f47a368b918d0e7bbb64946114567a606fea238eb20c851d",
+    "src/competition_sim/scenarios/01_open/environment.pgm": "451cbb30a7b5ee5767812f4ec51905c4b82baea7494759c64de2b1de3168ab23",
+    "src/competition_sim/scenarios/02_upper_reroute/world.world": "17fcba43d90534602cf62645713339b248588f6a708df6dc35f2bda70f74f419",
+    "src/competition_sim/scenarios/02_upper_reroute/scenario.json": "f2b2213cd2bedf3ae1f96902bd4661d9851ced4bc6e5a2ee193ebab53ba0decb",
+    "src/competition_sim/scenarios/02_upper_reroute/environment.yaml": "de09d71ec3185c44f47a368b918d0e7bbb64946114567a606fea238eb20c851d",
+    "src/competition_sim/scenarios/02_upper_reroute/environment.pgm": "fd444418bcc7dbec4ef7116d6b2e09458bc412d17b1a78d2994f7463cc1de886",
+    "src/competition_sim/scenarios/03_lower_reroute/world.world": "89ced4b600aebe6ea59656a1cfffb3192f109ae828293241f73a88ddbfccb24c",
+    "src/competition_sim/scenarios/03_lower_reroute/scenario.json": "0aa7d5ecb5c1d8168de76656cc1b36f6448a15417ff4aaec31f47c1a5ce5a26a",
+    "src/competition_sim/scenarios/03_lower_reroute/environment.yaml": "de09d71ec3185c44f47a368b918d0e7bbb64946114567a606fea238eb20c851d",
+    "src/competition_sim/scenarios/03_lower_reroute/environment.pgm": "afdebefe722d53c239a4cf9530b49c9a673edc848d3db30561679492c3b64d40",
+    "src/competition_sim/scenarios/04_divider_detour/world.world": "6c2cd7eef26a94e1417209ad72c67c0e61c877fc1b8b0410ec3925309c4c6ee9",
+    "src/competition_sim/scenarios/04_divider_detour/scenario.json": "77ad74fafa96e0c4ae82491de0481e3ade1d487e570904188578e3e6eac082da",
+    "src/competition_sim/scenarios/04_divider_detour/environment.yaml": "de09d71ec3185c44f47a368b918d0e7bbb64946114567a606fea238eb20c851d",
+    "src/competition_sim/scenarios/04_divider_detour/environment.pgm": "500c48d716e28c8fea837fa110ad2d1eb5889b00a5d914cafff6f356a16aebf3",
+    "src/competition_sim/scenarios/05_finish_approach/world.world": "3fec15690fb94a2a7f92d45010374348aec83dc5c980461b642e085b23b6d53f",
+    "src/competition_sim/scenarios/05_finish_approach/scenario.json": "ec49f67dd8d1987797d18bb5e59031ce27297c314aaf4787a8c94b2a235afe33",
+    "src/competition_sim/scenarios/05_finish_approach/environment.yaml": "de09d71ec3185c44f47a368b918d0e7bbb64946114567a606fea238eb20c851d",
+    "src/competition_sim/scenarios/05_finish_approach/environment.pgm": "a5a15282a2317dc87c06c4754dc376271eb4dd66616d0419e32718ea9c8f3749",
+    "src/competition_sim/scenarios/06_blocked_exit/world.world": "eb487bfa581e2c63156dfceff1bfecfbdbb7fb0758feb5e59a3a5518c7e059e3",
+    "src/competition_sim/scenarios/06_blocked_exit/scenario.json": "bd423aedcb56990e94a70ad04daa47609805b6102b2c04d21aecba8e09181429",
+    "src/competition_sim/scenarios/06_blocked_exit/environment.yaml": "de09d71ec3185c44f47a368b918d0e7bbb64946114567a606fea238eb20c851d",
+    "src/competition_sim/scenarios/06_blocked_exit/environment.pgm": "a5a530b7056039d22e73b4eeb9b9dcdcd1dd05db4fcd1b6b5cbedc7c2056e9b6"
+  },
+  "evidence_note": "Summary of completed Stage simulation runs; raw traces and logs remain local under outputs/teb_competition_20261116."
+}
