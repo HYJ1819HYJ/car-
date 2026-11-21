@@ -21,6 +21,7 @@
 #include "stm32_bridge/protocol.hpp"
 #include "stm32_bridge/safety_geometry.hpp"
 #include "stm32_bridge/footprint_parameters.hpp"
+#include "stm32_bridge/joystick_guard.hpp"
 
 using stm32_bridge::ControlCmd;
 using stm32_bridge::ControlProtocol;
@@ -276,23 +277,12 @@ private:
 
   void mainLoop(const ros::TimerEvent&) {
     // ========== 1. 读取手柄 ==========
-    if (joy_fd_ >= 0) {
-      struct js_event e;
-      while (::read(joy_fd_, &e, sizeof(e)) == sizeof(e)) {
-        // JS_EVENT_INIT 是正常的初始状态，不可直接丢弃。若节点启动时
-        // 用户正按着 LB，丢弃 INIT 会让手柄一直被误判为未按下，直到
-        // 再次松开并重按。
-        const uint8_t event_type = e.type & ~JS_EVENT_INIT;
-        switch (event_type) {
-          case JS_EVENT_BUTTON:
-            if (e.number < 11) joy_buttons_[e.number] = e.value;
-            break;
-          case JS_EVENT_AXIS:
-            if (e.number < 8) joy_axes_[e.number] = static_cast<double>(e.value) / 32767.0;
-            break;
-        }
-      }
-      if (errno != EAGAIN) errno = 0;
+    if (joy_fd_ >= 0 && !stm32_bridge::readJoystickSafely(joy_fd_, joy_axes_, joy_buttons_)) {
+      ROS_ERROR("Joystick disconnected or read failed; command cleared");
+      ::close(joy_fd_);
+      joy_fd_ = -1;
+      cmd_v_ = cmd_w_ = 0.0;
+      last_cmd_time_ = ros::Time(0);
     }
 
     // ========== 2. 计算速度 ==========
