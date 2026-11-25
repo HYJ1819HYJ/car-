@@ -1,0 +1,29 @@
+{
+  "source": "posegraph.posegraph",
+  "selection": "outbound path through farthest recorded pose",
+  "spacing_m": 0.8,
+  "final_index": 89,
+  "farthest_distance_from_start_m": 3.4280016004648552,
+  "waypoints": [
+    [
+      0.8141,
+      0.023
+    ],
+    [
+      1.4955,
+      -0.4273
+    ],
+    [
+      2.2321,
+      -0.7582
+    ],
+    [
+      3.0837,
+      -0.7802
+    ],
+    [
+      3.5574,
+      -0.6664
+    ]
+  ]
+}

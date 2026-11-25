@@ -1,12 +1,14 @@
 #include <ros/ros.h>
 
 #include <actionlib/client/simple_action_client.h>
+#include <dynamic_reconfigure/Reconfigure.h>
 #include <geometry_msgs/PoseStamped.h>
 #include <geometry_msgs/PoseWithCovarianceStamped.h>
 #include <move_base_msgs/MoveBaseAction.h>
 #include <nav_msgs/OccupancyGrid.h>
 #include <sensor_msgs/CameraInfo.h>
 #include <sensor_msgs/JointState.h>
+#include <sensor_msgs/LaserScan.h>
 #include <std_msgs/Bool.h>
 #include <std_msgs/String.h>
 #include <tf2/LinearMath/Matrix3x3.h>
@@ -16,6 +18,12 @@
 
 #include <stm32_bridge/BlueTargetObservation.h>
 #include <stm32_bridge/BlackLineObservation.h>
+
+#include <maze_planner/wall_parking.h>
+#include <maze_planner/visual_tracking.h>
+#include <maze_planner/search_waypoint_order.h>
+#include <XmlRpcException.h>
+#include <XmlRpcValue.h>
 
 #include <algorithm>
 #include <cmath>
@@ -63,6 +71,8 @@ class BlueGoalNavigator {
     pnh_.param<bool>("auto_start", auto_start_, false);
     pnh_.param<double>("start_delay", start_delay_, 5.0);
     pnh_.param<bool>("search_enabled", search_enabled_, true);
+    pnh_.param<bool>("acquire_target_in_navigation", acquire_target_in_navigation_, true);
+    pnh_.param<bool>("hold_at_course_end", hold_at_course_end_, false);
     pnh_.param<bool>("require_localization", require_localization_, true);
     pnh_.param<bool>("require_gimbal", require_gimbal_, false);
     pnh_.param<bool>("require_camera_info", require_camera_info_, false);
@@ -87,11 +97,24 @@ class BlueGoalNavigator {
     pnh_.param<double>("search_clearance", search_clearance_, 0.50);
     pnh_.param<double>("search_goal_timeout", search_goal_timeout_, 30.0);
     pnh_.param<int>("max_search_waypoints", max_search_waypoints_, 250);
+    pnh_.param<bool>("prefer_forward_search", prefer_forward_search_, false);
     pnh_.param<bool>("line_guidance_enabled", line_guidance_enabled_, true);
     pnh_.param<double>("waypoint_observation_time", waypoint_observation_time_, 3.0);
     pnh_.param<double>("line_scan_hold_time", line_scan_hold_time_, 10.0);
     pnh_.param<double>("line_retrigger_cooldown", line_retrigger_cooldown_, 12.0);
     pnh_.param<double>("black_line_timeout", black_line_timeout_, 0.6);
+    pnh_.param<bool>("wall_parking_enabled", wall_parking_enabled_, false);
+    pnh_.param<double>("wall_parking_standoff", wall_parking_standoff_, 0.56);
+    pnh_.param<double>("wall_parking_xy_tolerance", wall_parking_xy_tolerance_, 0.04);
+    pnh_.param<double>("wall_parking_yaw_tolerance", wall_parking_yaw_tolerance_, 0.08);
+    pnh_.param<bool>("visual_tracking_parking_enabled", visual_tracking_parking_enabled_, false);
+    pnh_.param<double>("visual_stop_area_ratio", visual_stop_area_ratio_, 0.16);
+    pnh_.param<double>("visual_facing_tolerance_deg", visual_facing_tolerance_deg_, 5.0);
+    pnh_.param<double>("visual_approach_standoff", visual_approach_standoff_, 0.48);
+    pnh_.param<double>("visual_approach_step", visual_approach_step_, 0.05);
+    pnh_.param<double>("visual_goal_xy_tolerance", visual_goal_xy_tolerance_, 0.04);
+    pnh_.param<double>("visual_goal_yaw_tolerance", visual_goal_yaw_tolerance_, 0.08);
+    pnh_.param<double>("visual_goal_update_period", visual_goal_update_period_, 1.0);
     pnh_.param<double>("max_localization_position_stddev",
                         max_localization_position_stddev_, 0.50);
     pnh_.param<double>("max_localization_yaw_stddev",
@@ -106,11 +129,22 @@ class BlueGoalNavigator {
     line_scan_hold_time_ = std::max(1.0, line_scan_hold_time_);
     line_retrigger_cooldown_ = std::max(1.0, line_retrigger_cooldown_);
     black_line_timeout_ = std::max(0.1, black_line_timeout_);
+    visual_stop_area_ratio_ = clampValue(visual_stop_area_ratio_, 0.0, 1.0);
+    visual_facing_tolerance_deg_ = clampValue(visual_facing_tolerance_deg_, 0.0, 180.0);
+    visual_approach_standoff_ = std::max(0.0, visual_approach_standoff_);
+    visual_approach_step_ = std::max(0.01, visual_approach_step_);
+    visual_goal_xy_tolerance_ = std::max(0.001, visual_goal_xy_tolerance_);
+    visual_goal_yaw_tolerance_ = std::max(0.001, visual_goal_yaw_tolerance_);
+    current_visual_standoff_ = visual_approach_standoff_;
+    visual_goal_update_period_ = std::max(0.1, visual_goal_update_period_);
+    if (wall_parking_enabled_ || visual_tracking_parking_enabled_)
+      min_target_range_ = std::min(min_target_range_, 0.25);
 
     observation_sub_ = nh_.subscribe("/blue_target/observation", 10,
                                      &BlueGoalNavigator::observationCb, this);
     black_line_sub_ = nh_.subscribe("/black_line/observation", 10,
                                     &BlueGoalNavigator::blackLineCb, this);
+    scan_sub_ = nh_.subscribe("/scan", 1, &BlueGoalNavigator::scanCb, this);
     camera_info_sub_ = nh_.subscribe("/usb_cam/camera_info", 2,
                                      &BlueGoalNavigator::cameraInfoCb, this);
     map_sub_ = nh_.subscribe("/map", 1, &BlueGoalNavigator::mapCb, this);
@@ -125,6 +159,10 @@ class BlueGoalNavigator {
                                        &BlueGoalNavigator::gimbalLockedCb, this);
     enable_sub_ = nh_.subscribe("/blue_autonomy/enable", 2,
                                 &BlueGoalNavigator::enableCb, this);
+    tolerance_client_ = nh_.serviceClient<dynamic_reconfigure::Reconfigure>(
+        "/move_base/TebLocalPlannerROS/set_parameters");
+    loadFootprint();
+    loadCourseWaypoints();
 
     state_pub_ = nh_.advertise<std_msgs::String>("/blue_autonomy/state", 1, true);
     target_pose_pub_ = nh_.advertise<geometry_msgs::PoseStamped>(
@@ -160,6 +198,183 @@ class BlueGoalNavigator {
     double x{0.0};
     double y{0.0};
   };
+
+  void loadCourseWaypoints() {
+    XmlRpc::XmlRpcValue values;
+    if (!pnh_.getParam("course_waypoints", values)) return;
+    if (values.getType() != XmlRpc::XmlRpcValue::TypeArray) {
+      ROS_ERROR("course_waypoints must be an array of [x, y] points");
+      return;
+    }
+    for (int i = 0; i < values.size(); ++i) {
+      if (values[i].getType() != XmlRpc::XmlRpcValue::TypeArray ||
+          values[i].size() != 2) {
+        ROS_ERROR("Invalid course waypoint at index %d", i);
+        course_waypoints_.clear();
+        return;
+      }
+      double coordinates[2];
+      for (int j = 0; j < 2; ++j) {
+        const auto type = values[i][j].getType();
+        if (type == XmlRpc::XmlRpcValue::TypeInt)
+          coordinates[j] = static_cast<int>(values[i][j]);
+        else if (type == XmlRpc::XmlRpcValue::TypeDouble)
+          coordinates[j] = static_cast<double>(values[i][j]);
+        else {
+          ROS_ERROR("Invalid course waypoint coordinate at index %d", i);
+          course_waypoints_.clear();
+          return;
+        }
+        if (!std::isfinite(coordinates[j])) {
+          ROS_ERROR("Non-finite course waypoint at index %d", i);
+          course_waypoints_.clear();
+          return;
+        }
+      }
+      course_waypoints_.push_back(Point2D{coordinates[0], coordinates[1]});
+    }
+    ROS_INFO("Loaded %zu mapped-course waypoints", course_waypoints_.size());
+  }
+
+  void loadFootprint() {
+    XmlRpc::XmlRpcValue value;
+    if (nh_.getParam("/robot_geometry/footprint", value) &&
+        value.getType() == XmlRpc::XmlRpcValue::TypeArray) {
+      for (int i = 0; i < value.size(); ++i) {
+        if (value[i].getType() != XmlRpc::XmlRpcValue::TypeArray ||
+            value[i].size() != 2) continue;
+        try {
+          const double x = value[i][0].getType() == XmlRpc::XmlRpcValue::TypeInt
+              ? static_cast<int>(value[i][0]) : static_cast<double>(value[i][0]);
+          const double y = value[i][1].getType() == XmlRpc::XmlRpcValue::TypeInt
+              ? static_cast<int>(value[i][1]) : static_cast<double>(value[i][1]);
+          footprint_.emplace_back(x, y);
+        } catch (const XmlRpc::XmlRpcException&) {
+          footprint_.clear();
+          break;
+        }
+      }
+    }
+    if (footprint_.size() < 3) {
+      ROS_WARN("STL footprint unavailable; using configured rectangular extent for finish check");
+      footprint_ = {maze_planner::Point2(0.3483, 0.245),
+                    maze_planner::Point2(0.3483, -0.245),
+                    maze_planner::Point2(-0.1517, -0.245),
+                    maze_planner::Point2(-0.1517, 0.245)};
+    }
+  }
+
+  void scanCb(const sensor_msgs::LaserScan::ConstPtr& msg) {
+    latest_scan_ = *msg;
+    last_scan_time_ = ros::Time::now();
+    have_scan_ = true;
+  }
+
+  bool setParkingTolerance(bool parking) {
+    if ((!wall_parking_enabled_ && !visual_tracking_parking_enabled_) ||
+        parking == parking_tolerance_active_) return true;
+    const std::string prefix = "/move_base/TebLocalPlannerROS/";
+    if (parking) {
+      nh_.param<double>(prefix + "xy_goal_tolerance", previous_xy_tolerance_, 0.12);
+      nh_.param<double>(prefix + "yaw_goal_tolerance", previous_yaw_tolerance_, 0.12);
+    }
+    dynamic_reconfigure::Reconfigure request;
+    dynamic_reconfigure::DoubleParameter xy;
+    xy.name = "xy_goal_tolerance";
+    xy.value = parking ? (visual_tracking_parking_enabled_ ? visual_goal_xy_tolerance_
+                                                          : wall_parking_xy_tolerance_)
+                       : previous_xy_tolerance_;
+    dynamic_reconfigure::DoubleParameter yaw;
+    yaw.name = "yaw_goal_tolerance";
+    yaw.value = parking ? (visual_tracking_parking_enabled_ ? visual_goal_yaw_tolerance_
+                                                           : wall_parking_yaw_tolerance_)
+                        : previous_yaw_tolerance_;
+    request.request.config.doubles.push_back(xy);
+    request.request.config.doubles.push_back(yaw);
+    if (!tolerance_client_.call(request)) {
+      ROS_WARN_THROTTLE(5.0, "Unable to update TEB goal tolerance for wall parking");
+      return false;
+    }
+    parking_tolerance_active_ = parking;
+    ROS_INFO("TEB goal tolerances set to xy=%.3f yaw=%.3f", xy.value, yaw.value);
+    return true;
+  }
+
+  bool targetBearingInBase(double* bearing) {
+    if (!bearing || !have_target_observation_ || !target_visible_ ||
+        (ros::Time::now() - last_target_seen_time_).toSec() > 0.5 ||
+        (require_gimbal_ && (ros::Time::now() - last_joint_time_).toSec() > 1.5))
+      return false;
+
+    const stm32_bridge::BlueTargetObservation& observation = latest_observation_;
+    if (!observation.image_width || !observation.image_height) return false;
+    double fx = 0.0, fy = 0.0;
+    double cx = 0.5 * observation.image_width;
+    double cy = 0.5 * observation.image_height;
+    if (have_camera_info_ && camera_info_.width > 0 && camera_info_.height > 0) {
+      const double sx = static_cast<double>(observation.image_width) / camera_info_.width;
+      const double sy = static_cast<double>(observation.image_height) / camera_info_.height;
+      fx = camera_info_.K[0] * sx;
+      fy = camera_info_.K[4] * sy;
+      cx = camera_info_.K[2] * sx;
+      cy = camera_info_.K[5] * sy;
+    } else {
+      const double hfov = clampValue(fallback_hfov_deg_, 20.0, 150.0) * M_PI / 180.0;
+      fx = observation.image_width / (2.0 * std::tan(0.5 * hfov));
+      fy = fx;
+    }
+    if (fx <= 1.0 || fy <= 1.0) return false;
+    const bool fresh_gimbal = (ros::Time::now() - last_joint_time_).toSec() <= 1.5;
+    const double pan = fresh_gimbal ? pan_angle_ : 0.0;
+    const double tilt = fresh_gimbal ? tilt_angle_ : 0.0;
+    return maze_planner::visualBearing(pan, tilt, observation.center_x,
+                                      observation.center_y, cx, cy, fx, fy, bearing);
+  }
+
+  bool visualParkingReached() {
+    double bearing = 0.0;
+    return targetBearingInBase(&bearing) &&
+           maze_planner::visualStopReached(target_visible_, latest_observation_.contour_ratio,
+                                            bearing, visual_stop_area_ratio_,
+                                            visual_facing_tolerance_deg_ * M_PI / 180.0);
+  }
+
+  bool targetWallInMap(maze_planner::WallObservation* result) {
+    double bearing = 0.0;
+    if (!result || !have_scan_ || (ros::Time::now() - last_scan_time_).toSec() > 0.5 ||
+        !targetBearingInBase(&bearing)) return false;
+
+    geometry_msgs::TransformStamped laser_to_base;
+    try {
+      laser_to_base = tf_buffer_.lookupTransform(base_frame_, latest_scan_.header.frame_id,
+                                                 ros::Time(0), ros::Duration(0.05));
+    } catch (const std::exception& error) {
+      ROS_WARN_THROTTLE(3.0, "Wall fitting cannot transform laser scan: %s", error.what());
+      return false;
+    }
+    const double laser_yaw = yawFromQuaternion(laser_to_base.transform.rotation);
+    const double lx = laser_to_base.transform.translation.x;
+    const double ly = laser_to_base.transform.translation.y;
+    std::vector<maze_planner::Point2> scan;
+    scan.reserve(latest_scan_.ranges.size());
+    for (std::size_t i = 0; i < latest_scan_.ranges.size(); ++i) {
+      const double range = latest_scan_.ranges[i];
+      if (!std::isfinite(range) || range <= latest_scan_.range_min ||
+          range >= latest_scan_.range_max || range > 4.0) continue;
+      const double angle = laser_yaw + latest_scan_.angle_min + i * latest_scan_.angle_increment;
+      scan.emplace_back(lx + range * std::cos(angle), ly + range * std::sin(angle));
+    }
+    maze_planner::WallObservation wall;
+    if (!maze_planner::fitTargetWall(scan, maze_planner::Point2(camera_x_, camera_y_),
+                                    bearing, &wall)) return false;
+    double x = 0.0, y = 0.0, robot_yaw = 0.0;
+    if (!robotPose(&x, &y, &robot_yaw)) return false;
+    result->marker = maze_planner::Point2(x, y) + maze_planner::rotate(wall.marker, robot_yaw);
+    result->outward = maze_planner::rotate(wall.outward, robot_yaw);
+    result->inliers = wall.inliers;
+    result->span = wall.span;
+    return true;
+  }
 
   const char* stateName(State state) const {
     switch (state) {
@@ -199,6 +414,7 @@ class BlueGoalNavigator {
       goal_active_ = false;
       goal_kind_ = GoalKind::NONE;
       estimates_.clear();
+      setParkingTolerance(false);
       publishGoalReached(false);
       setState(State::IDLE, "disabled by /blue_autonomy/enable");
       return;
@@ -210,7 +426,11 @@ class BlueGoalNavigator {
       goal_active_ = false;
       goal_kind_ = GoalKind::NONE;
       search_index_ = 0;
+      course_index_ = 0;
+      current_goal_is_course_ = false;
       estimates_.clear();
+      current_visual_standoff_ = visual_approach_standoff_;
+      setParkingTolerance(false);
       black_line_visible_ = false;
       publishGoalReached(false);
       setState(State::WAIT_SYSTEM, "mission enabled");
@@ -327,8 +547,16 @@ class BlueGoalNavigator {
 
   void observationCb(const stm32_bridge::BlueTargetObservation::ConstPtr& msg) {
     last_observation_time_ = ros::Time::now();
+    if (!acquire_target_in_navigation_) {
+      // The handoff manager independently observes the target and only switches
+      // after its lidar corridor check. Do not interrupt the mapped course.
+      target_visible_ = false;
+      return;
+    }
     target_visible_ = msg->detected;
     if (!msg->detected) return;
+    latest_observation_ = *msg;
+    have_target_observation_ = true;
     last_target_seen_time_ = ros::Time::now();
     if (!enabled_ || state_ == State::COMPLETE) return;
 
@@ -340,10 +568,21 @@ class BlueGoalNavigator {
       goal_active_ = false;
       goal_kind_ = GoalKind::NONE;
       estimates_.clear();
+      current_visual_standoff_ = visual_approach_standoff_;
       setState(State::ACQUIRE, "blue target detected; stabilizing map position");
     }
 
-    if (require_gimbal_ && !gimbal_locked_) return;
+    if (visual_tracking_parking_enabled_ &&
+        (state_ == State::ACQUIRE || state_ == State::APPROACH) &&
+        visualParkingReached()) {
+      finishMission();
+      return;
+    }
+
+    // Visual following uses the measured pan and the current image offset even
+    // while the firmware's lock flag flickers; estimateTarget still requires a
+    // fresh joint reading when a gimbal is configured.
+    if (require_gimbal_ && !gimbal_locked_ && !visual_tracking_parking_enabled_) return;
 
     TargetEstimate estimate;
     if (!estimateTarget(*msg, &estimate)) return;
@@ -539,17 +778,10 @@ class BlueGoalNavigator {
     double robot_y = 0.0;
     double robot_yaw = 0.0;
     if (robotPose(&robot_x, &robot_y, &robot_yaw)) {
-      std::size_t nearest = 0;
-      double nearest_distance = std::numeric_limits<double>::infinity();
-      for (std::size_t i = 0; i < search_waypoints_.size(); ++i) {
-        const double distance = std::hypot(search_waypoints_[i].x - robot_x,
-                                           search_waypoints_[i].y - robot_y);
-        if (distance < nearest_distance) {
-          nearest_distance = distance;
-          nearest = i;
-        }
-      }
-      std::rotate(search_waypoints_.begin(), search_waypoints_.begin() + nearest,
+      const std::size_t first = maze_planner::searchStartIndex(
+          search_waypoints_, robot_x, robot_y, robot_yaw,
+          prefer_forward_search_ && course_waypoints_.empty());
+      std::rotate(search_waypoints_.begin(), search_waypoints_.begin() + first,
                   search_waypoints_.end());
     }
     ROS_INFO("Generated %zu autonomous blue-target search waypoints",
@@ -570,20 +802,31 @@ class BlueGoalNavigator {
   }
 
   void sendNextSearchGoal() {
-    if (search_waypoints_.empty()) generateSearchWaypoints();
-    if (search_waypoints_.empty()) {
-      setState(State::FAILED, "map contains no safe search waypoint");
-      return;
-    }
-    if (search_index_ >= search_waypoints_.size()) search_index_ = 0;
-    const Point2D target = search_waypoints_[search_index_++];
+    setParkingTolerance(false);
     double robot_x = 0.0;
     double robot_y = 0.0;
     double robot_yaw = 0.0;
     if (!robotPose(&robot_x, &robot_y, &robot_yaw)) return;
+    Point2D target;
+    current_goal_is_course_ = course_index_ < course_waypoints_.size();
+    if (current_goal_is_course_) {
+      // Advance only when the action finishes. A temporary camera, lidar, or
+      // localization interruption cancels the goal and must retry this point.
+      target = course_waypoints_[course_index_];
+    } else {
+      if (search_waypoints_.empty()) generateSearchWaypoints();
+      if (search_waypoints_.empty()) {
+        setState(State::FAILED, "map contains no safe search waypoint");
+        return;
+      }
+      if (search_index_ >= search_waypoints_.size()) search_index_ = 0;
+      target = search_waypoints_[search_index_++];
+    }
     const double yaw = std::atan2(target.y - robot_y, target.x - robot_x);
     sendMoveBaseGoal(target.x, target.y, yaw, GoalKind::SEARCH);
-    setState(State::SEARCH, "scanning map free space for blue A4 paper");
+    setState(State::SEARCH, current_goal_is_course_ ?
+        "following mapped course toward the finish area" :
+        "scanning map free space for blue A4 paper");
   }
 
   bool chooseApproachGoal(const TargetEstimate& target,
@@ -610,19 +853,72 @@ class BlueGoalNavigator {
   bool sendApproachGoal(const TargetEstimate& target) {
     Point2D position;
     double yaw = 0.0;
-    if (!chooseApproachGoal(target, &position, &yaw)) {
-      ROS_WARN("No statically safe approach pose around estimated blue target");
+    maze_planner::WallObservation wall;
+    const bool use_visual = visual_tracking_parking_enabled_;
+    const bool use_wall = !use_visual && wall_parking_enabled_ && targetWallInMap(&wall);
+    if (use_visual) {
+      double robot_x = 0.0, robot_y = 0.0, robot_yaw = 0.0, bearing = 0.0;
+      if (!robotPose(&robot_x, &robot_y, &robot_yaw) || !targetBearingInBase(&bearing))
+        return false;
+      const double camera_map_x = robot_x + std::cos(robot_yaw)*camera_x_ -
+                                  std::sin(robot_yaw)*camera_y_;
+      const double camera_map_y = robot_y + std::sin(robot_yaw)*camera_x_ +
+                                  std::cos(robot_yaw)*camera_y_;
+      double target_x = camera_map_x + target.range * std::cos(robot_yaw + bearing);
+      double target_y = camera_map_y + target.range * std::sin(robot_yaw + bearing);
+      // Prefer the ray/wall intersection when the laser sees the target wall;
+      // otherwise continue with the existing A4-height range estimate.
+      if (targetWallInMap(&wall)) {
+        target_x = wall.marker.x;
+        target_y = wall.marker.y;
+      }
+      if (!maze_planner::visualApproachGoal(robot_x, robot_y, target_x, target_y,
+                                           current_visual_standoff_, &position.x,
+                                           &position.y, &yaw)) return false;
+      if (!pointHasClearance(position.x, position.y, approach_clearance_)) {
+        // A closer retry must not fall back to an older, farther goal. The
+        // existing static clearance test still determines whether it can be planned.
+        if (current_visual_standoff_ + 1e-6 < visual_approach_standoff_) {
+          ROS_WARN_THROTTLE(3.0, "No closer visual approach pose passes static-map clearance");
+          return false;
+        }
+        // Keep obstacle routing in move_base when the direct sight-line goal
+        // is not available; the requested heading still points at the paper.
+        if (!chooseApproachGoal(target, &position, &yaw)) return false;
+        yaw = std::atan2(target_y - robot_y, target_x - robot_x);
+      }
+    } else if (use_wall) {
+      const maze_planner::Point2 goal = maze_planner::parkingPosition(
+          wall, wall_parking_standoff_);
+      position.x = goal.x;
+      position.y = goal.y;
+      yaw = maze_planner::parkingYaw(wall);
+      if (!pointHasClearance(position.x, position.y, approach_clearance_)) {
+        ROS_WARN_THROTTLE(3.0, "Wall-normal parking pose fails static-map clearance");
+        return false;
+      }
+    } else if (!chooseApproachGoal(target, &position, &yaw)) {
+      ROS_WARN_THROTTLE(3.0, "No statically safe approach pose around estimated blue target");
       return false;
     }
     if (goal_active_ && goal_kind_ == GoalKind::APPROACH &&
-        std::hypot(position.x - current_approach_goal_.x,
-                   position.y - current_approach_goal_.y) < goal_update_distance_ &&
-        (ros::Time::now() - last_approach_update_).toSec() < goal_update_period_) {
-      return true;
+        use_wall == current_goal_uses_wall_ && use_visual == current_goal_uses_visual_) {
+      const double displacement = std::hypot(position.x - current_approach_goal_.x,
+                                             position.y - current_approach_goal_.y);
+      const double yaw_error = std::fabs(std::atan2(std::sin(yaw - current_approach_yaw_),
+                                                    std::cos(yaw - current_approach_yaw_)));
+      if (use_visual && displacement < 0.10 && yaw_error < 0.08) return true;
+      if (use_wall && displacement < 0.06 && yaw_error < 0.08) return true;
+      if (!use_visual && !use_wall && displacement < goal_update_distance_ &&
+          (ros::Time::now() - last_approach_update_).toSec() < goal_update_period_) return true;
     }
 
     if (goal_active_) move_base_.cancelGoal();
+    setParkingTolerance(use_wall || use_visual);
     current_approach_goal_ = position;
+    current_approach_yaw_ = yaw;
+    current_goal_uses_wall_ = use_wall;
+    current_goal_uses_visual_ = use_visual;
     last_approach_update_ = ros::Time::now();
     sendMoveBaseGoal(position.x, position.y, yaw, GoalKind::APPROACH);
 
@@ -633,7 +929,10 @@ class BlueGoalNavigator {
     published.pose.position.y = position.y;
     published.pose.orientation = quaternionFromYaw(yaw);
     approach_goal_pub_.publish(published);
-    setState(State::APPROACH, "stable blue target localized; navigating to approach pose");
+    setState(State::APPROACH, use_visual ?
+        "following blue target direction using gimbal and image" : use_wall ?
+        "wall and blue target localized; navigating to wall-normal parking pose" :
+        "stable blue target localized; navigating to coarse approach pose");
     return true;
   }
 
@@ -659,8 +958,12 @@ class BlueGoalNavigator {
     if (goal_active_) move_base_.cancelGoal();
     goal_active_ = false;
     goal_kind_ = GoalKind::NONE;
+    setParkingTolerance(false);
     publishGoalReached(true);
-    setState(State::COMPLETE, "approach goal reached; base stop latched for judge confirmation");
+    setState(State::COMPLETE, visual_tracking_parking_enabled_ ?
+        "blue target area and facing thresholds reached; base stop latched" : wall_parking_enabled_ ?
+        "estimated footprint inside finish area; base stop latched for judge confirmation" :
+        "approach goal reached; base stop latched for judge confirmation");
   }
 
   void handleSearchState() {
@@ -673,11 +976,21 @@ class BlueGoalNavigator {
     const bool timeout = (ros::Time::now() - goal_sent_time_).toSec() > search_goal_timeout_;
     if (action_state.isDone() || timeout) {
       if (timeout) move_base_.cancelGoal();
+      const bool was_course_goal = current_goal_is_course_;
       goal_active_ = false;
       goal_kind_ = GoalKind::NONE;
+      if (was_course_goal) ++course_index_;
       if (!timeout && action_state == actionlib::SimpleClientGoalState::SUCCEEDED) {
-        waypoint_observation_start_time_ = ros::Time::now();
-        setState(State::OBSERVE, "search waypoint reached; observing for blue paper and black line");
+        if (was_course_goal && course_index_ < course_waypoints_.size()) {
+          sendNextSearchGoal();
+        } else {
+          waypoint_observation_start_time_ = ros::Time::now();
+          setState(State::OBSERVE, was_course_goal && hold_at_course_end_ ?
+              "mapped course end reached; scanning for blue marker" :
+              "search waypoint reached; observing for blue paper and black line");
+        }
+      } else if (was_course_goal && course_index_ >= course_waypoints_.size()) {
+        setState(State::FAILED, "mapped course end could not be reached");
       } else {
         sendNextSearchGoal();
       }
@@ -686,6 +999,10 @@ class BlueGoalNavigator {
 
   void handleObserveState() {
     if (target_visible_) return;
+    // The final recorded point is in the finish area. Keep scanning there;
+    // generic free-space waypoints can lead back through the course.
+    if (hold_at_course_end_ && !course_waypoints_.empty() &&
+        course_index_ >= course_waypoints_.size()) return;
     const bool line_fresh = black_line_visible_ &&
         (ros::Time::now() - last_black_line_time_).toSec() <= black_line_timeout_;
     if (line_guidance_enabled_ && line_fresh &&
@@ -725,16 +1042,71 @@ class BlueGoalNavigator {
     TargetEstimate stable;
     double stddev = 0.0;
     if (stableTarget(&stable, &stddev)) {
+      if (visual_tracking_parking_enabled_ && visualParkingReached()) {
+        finishMission();
+        return;
+      }
+      if (!visual_tracking_parking_enabled_ && wall_parking_enabled_ &&
+          robotInsideDetectedFinish()) {
+        finishMission();
+        return;
+      }
       if (!sendApproachGoal(stable)) {
         setState(State::ACQUIRE, "target stable but no collision-free approach pose");
       }
     }
   }
 
+  bool robotInsideDetectedFinish() {
+    maze_planner::WallObservation wall;
+    double x = 0.0, y = 0.0, yaw = 0.0;
+    return targetWallInMap(&wall) && robotPose(&x, &y, &yaw) &&
+           maze_planner::footprintInsideFinish(wall, maze_planner::Point2(x, y), yaw,
+                                              footprint_);
+  }
+
   void handleApproachState() {
     if (!goal_active_ || goal_kind_ != GoalKind::APPROACH) return;
+    // The competition scores the whole vehicle inside the square, not its
+    // distance from one nominal pose. Stop as soon as the currently observed
+    // marker/wall and footprint establish that geometric condition.
+    if (visual_tracking_parking_enabled_ && visualParkingReached()) {
+      finishMission();
+      return;
+    }
+    if (!visual_tracking_parking_enabled_ && wall_parking_enabled_ && current_goal_uses_wall_) {
+      if (robotInsideDetectedFinish()) {
+        finishMission();
+        return;
+      }
+    }
     const actionlib::SimpleClientGoalState action_state = move_base_.getState();
     if (action_state == actionlib::SimpleClientGoalState::SUCCEEDED) {
+      if (visual_tracking_parking_enabled_) {
+        goal_active_ = false;
+        goal_kind_ = GoalKind::NONE;
+        estimates_.clear();
+        current_visual_standoff_ = std::max(0.0, current_visual_standoff_ - visual_approach_step_);
+        setState(State::ACQUIRE, "approach goal reached; visual thresholds unmet, planning closer");
+        return;
+      }
+      if (wall_parking_enabled_) {
+        maze_planner::WallObservation wall;
+        double x = 0.0, y = 0.0, yaw = 0.0;
+        const bool have_wall = current_goal_uses_wall_ && targetWallInMap(&wall);
+        const bool have_pose = robotPose(&x, &y, &yaw);
+        if (!have_wall || !have_pose ||
+            !maze_planner::footprintInsideFinish(wall, maze_planner::Point2(x, y), yaw,
+                                                footprint_)) {
+          goal_active_ = false;
+          goal_kind_ = GoalKind::NONE;
+          estimates_.clear();
+          setState(State::ACQUIRE, !have_wall ?
+              "coarse goal reached; observing blue target and wall for parking" :
+              "parking pose reached; refining estimated footprint and alignment");
+          return;
+        }
+      }
       finishMission();
       return;
     }
@@ -755,8 +1127,10 @@ class BlueGoalNavigator {
 
     TargetEstimate stable;
     double stddev = 0.0;
+    const double update_period = visual_tracking_parking_enabled_ ?
+        visual_goal_update_period_ : goal_update_period_;
     if (stableTarget(&stable, &stddev) &&
-        (ros::Time::now() - last_approach_update_).toSec() >= goal_update_period_) {
+        (ros::Time::now() - last_approach_update_).toSec() >= update_period) {
       sendApproachGoal(stable);
     }
   }
@@ -808,6 +1182,7 @@ class BlueGoalNavigator {
 
   ros::Subscriber observation_sub_;
   ros::Subscriber black_line_sub_;
+  ros::Subscriber scan_sub_;
   ros::Subscriber camera_info_sub_;
   ros::Subscriber map_sub_;
   ros::Subscriber amcl_sub_;
@@ -820,6 +1195,7 @@ class BlueGoalNavigator {
   ros::Publisher target_pose_pub_;
   ros::Publisher approach_goal_pub_;
   ros::Publisher goal_reached_pub_;
+  ros::ServiceClient tolerance_client_;
   ros::Timer timer_;
 
   bool auto_start_{false};
@@ -850,10 +1226,28 @@ class BlueGoalNavigator {
   double search_goal_timeout_{30.0};
   int max_search_waypoints_{250};
   bool line_guidance_enabled_{true};
+  bool prefer_forward_search_{false};
+  bool acquire_target_in_navigation_{true};
+  bool hold_at_course_end_{false};
   double waypoint_observation_time_{3.0};
   double line_scan_hold_time_{10.0};
   double line_retrigger_cooldown_{12.0};
   double black_line_timeout_{0.6};
+  bool wall_parking_enabled_{false};
+  double wall_parking_standoff_{0.56};
+  double wall_parking_xy_tolerance_{0.04};
+  double wall_parking_yaw_tolerance_{0.08};
+  bool visual_tracking_parking_enabled_{false};
+  double visual_stop_area_ratio_{0.16};
+  double visual_facing_tolerance_deg_{5.0};
+  double visual_approach_standoff_{0.48};
+  double visual_approach_step_{0.05};
+  double visual_goal_xy_tolerance_{0.04};
+  double visual_goal_yaw_tolerance_{0.08};
+  double current_visual_standoff_{0.48};
+  double visual_goal_update_period_{1.0};
+  double previous_xy_tolerance_{0.12};
+  double previous_yaw_tolerance_{0.12};
   double max_localization_position_stddev_{0.50};
   double max_localization_yaw_stddev_{0.50};
 
@@ -866,6 +1260,11 @@ class BlueGoalNavigator {
   bool target_pose_valid_{false};
   bool black_line_visible_{false};
   bool have_map_{false};
+  bool have_scan_{false};
+  bool have_target_observation_{false};
+  bool parking_tolerance_active_{false};
+  bool current_goal_uses_wall_{false};
+  bool current_goal_uses_visual_{false};
   bool have_camera_info_{false};
   bool have_amcl_{false};
   bool localization_good_{false};
@@ -878,14 +1277,22 @@ class BlueGoalNavigator {
   double tilt_angle_{0.0};
   nav_msgs::OccupancyGrid map_;
   sensor_msgs::CameraInfo camera_info_;
+  sensor_msgs::LaserScan latest_scan_;
+  stm32_bridge::BlueTargetObservation latest_observation_;
+  std::vector<maze_planner::Point2> footprint_;
   std::deque<TargetEstimate> estimates_;
   TargetEstimate latest_target_;
   std::vector<Point2D> search_waypoints_;
+  std::vector<Point2D> course_waypoints_;
+  std::size_t course_index_{0};
+  bool current_goal_is_course_{false};
   std::size_t search_index_{0};
   Point2D current_approach_goal_;
+  double current_approach_yaw_{0.0};
   ros::Time node_start_time_;
   ros::Time mission_enable_time_;
   ros::Time last_observation_time_;
+  ros::Time last_scan_time_;
   ros::Time last_target_seen_time_;
   ros::Time last_joint_time_;
   ros::Time goal_sent_time_;

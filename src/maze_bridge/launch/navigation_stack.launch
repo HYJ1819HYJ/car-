@@ -16,6 +16,7 @@
   <arg name="mode" default="navigation"/>   <!-- explore 或 navigation -->
   <arg name="smooth_global_plan" default="true"/>
   <arg name="forward_only_local_planner" default="true"/>
+  <arg name="navigation_cmd_vel_topic" default="/cmd_vel"/>
   <!-- 旧地图生成于雷达时间戳修复之前，必须重建 v2 地图。 -->
   <arg name="map_file" default="$(find maze_bridge)/../../maps/competition_map_v3.yaml"/>
   <!-- Prepare a source-matched mask automatically before costmaps can use it. -->
@@ -33,6 +34,7 @@
   <arg name="port" default="/dev/ttyUSB0"/>
   <arg name="baud" default="115200"/>
   <arg name="camera_device" default="/dev/video4"/>
+  <arg name="camera_respawn" default="false"/>
   <arg name="camera_frame_id" default="usb_cam"/>
   <arg name="camera_info_url" default=""/>
   <!-- 当 ROS +angular.z 实车却右转时使用 -1；架空车轮验证后再落地。 -->
@@ -74,7 +76,8 @@
   <arg name="gimbal_baud" default="115200"/>
   <arg name="gimbal_required" default="false"/>
   <arg name="gimbal_auto_enable" default="false"/>
-  <arg name="gimbal_pan_to_ros_sign" default="1.0"/>
+  <!-- 本车实测镜头向右时舵机报告正角度；ROS 右转角应为负。 -->
+  <arg name="gimbal_pan_to_ros_sign" default="-1.0"/>
   <arg name="gimbal_invert_target_x" default="true"/>
   <arg name="gimbal_tilt_to_ros_sign" default="-1.0"/>
 
@@ -94,7 +97,7 @@
   <arg name="initial_pose_a" default="0.0"/>
   <arg name="paper_height" default="0.297"/>
   <arg name="fallback_hfov_deg" default="70.0"/>
-  <!-- 远距离红色 A4 检测：同时要求连续色块尺寸、A4近似长宽比和填充率。 -->
+  <!-- 远距离蓝色 A4 检测：同时要求连续色块尺寸、A4近似长宽比和填充率。 -->
   <arg name="blue_ratio_threshold" default="0.0003"/>
   <arg name="blue_contour_ratio" default="0.00025"/>
   <arg name="blue_fill_ratio" default="0.40"/>
@@ -102,10 +105,11 @@
   <arg name="blue_min_pixel_height" default="10"/>
   <arg name="blue_min_aspect" default="0.25"/>
   <arg name="blue_max_aspect" default="1.70"/>
+  <arg name="blue_reject_vertical_stripes" default="false"/>
   <arg name="blue_confirm_frames" default="3"/>
   <arg name="blue_clear_frames" default="6"/>
-  <arg name="blue_h_min" default="170"/>
-  <arg name="blue_h_max" default="10"/>
+  <arg name="blue_h_min" default="100"/>
+  <arg name="blue_h_max" default="130"/>
   <arg name="blue_s_min" default="80"/>
   <arg name="blue_v_min" default="80"/>
   <arg name="blue_show_debug" default="false"/>
@@ -126,8 +130,22 @@
   <arg name="black_line_timeout" default="0.6"/>
   <arg name="approach_standoff" default="0.65"/>
   <arg name="approach_clearance" default="0.46"/>
+  <!-- Optional wall-relative parking; enable for the supervised finish test. -->
+  <arg name="wall_parking_enabled" default="false"/>
+  <arg name="wall_parking_standoff" default="0.56"/>
+  <arg name="wall_parking_xy_tolerance" default="0.04"/>
+  <arg name="wall_parking_yaw_tolerance" default="0.08"/>
+  <arg name="visual_tracking_parking_enabled" default="false"/>
+  <arg name="visual_stop_area_ratio" default="0.16"/>
+  <arg name="visual_facing_tolerance_deg" default="5.0"/>
+  <arg name="visual_approach_standoff" default="0.48"/>
+  <arg name="visual_approach_step" default="0.05"/>
+  <arg name="visual_goal_xy_tolerance" default="0.04"/>
+  <arg name="visual_goal_yaw_tolerance" default="0.08"/>
+  <arg name="visual_goal_update_period" default="1.0"/>
   <arg name="search_spacing" default="1.50"/>
   <arg name="search_clearance" default="0.50"/>
+  <arg name="search_goal_timeout" default="30.0"/>
 
   <!-- ============ 1. 硬件层 ============ -->
 
@@ -190,12 +208,13 @@
   <!-- 摄像头 -->
   <include file="$(find maze_bridge)/launch/usb_cam.launch">
     <arg name="show_image" value="false"/>
+    <arg name="respawn" value="$(arg camera_respawn)"/>
     <arg name="video_device" value="$(arg camera_device)"/>
     <arg name="camera_frame_id" value="$(arg camera_frame_id)"/>
     <arg name="camera_info_url" value="$(arg camera_info_url)"/>
   </include>
 
-  <!-- 红色终点检测 -->
+  <!-- 蓝色终点检测 -->
   <node pkg="stm32_bridge" type="blue_detector" name="blue_detector" output="screen">
     <param name="ratio_threshold" value="$(arg blue_ratio_threshold)"/>
     <param name="min_contour_ratio" value="$(arg blue_contour_ratio)"/>
@@ -204,6 +223,7 @@
     <param name="min_pixel_height" value="$(arg blue_min_pixel_height)"/>
     <param name="min_aspect" value="$(arg blue_min_aspect)"/>
     <param name="max_aspect" value="$(arg blue_max_aspect)"/>
+    <param name="reject_vertical_stripes" value="$(arg blue_reject_vertical_stripes)"/>
     <param name="confirm_frames" value="$(arg blue_confirm_frames)"/>
     <param name="clear_frames" value="$(arg blue_clear_frames)"/>
     <param name="h_min" value="$(arg blue_h_min)"/>
@@ -335,6 +355,7 @@
     <!-- 平滑全局参考提前入弯；TEB处理速度、角加速度和近场避障。
          差速车在确有需要且可行时仍可进行安全的原地朝向调整。 -->
     <node pkg="move_base" type="move_base" name="move_base" output="screen" clear_params="true">
+      <remap from="cmd_vel" to="$(arg navigation_cmd_vel_topic)"/>
       <param name="base_global_planner" value="$(eval 'maze_smooth_planner/SmoothGlobalPlanner' if arg('smooth_global_plan') else 'global_planner/GlobalPlanner')"/>
       <param name="base_local_planner" value="$(eval 'maze_smooth_planner/ForwardTebLocalPlanner' if arg('forward_only_local_planner') else 'teb_local_planner/TebLocalPlannerROS')"/>
       <!-- Planning previews must use the same occupied space as navigation;
@@ -418,8 +439,21 @@
         <param name="fallback_hfov_deg" value="$(arg fallback_hfov_deg)"/>
         <param name="approach_standoff" value="$(arg approach_standoff)"/>
         <param name="approach_clearance" value="$(arg approach_clearance)"/>
+        <param name="wall_parking_enabled" value="$(arg wall_parking_enabled)"/>
+        <param name="wall_parking_standoff" value="$(arg wall_parking_standoff)"/>
+        <param name="wall_parking_xy_tolerance" value="$(arg wall_parking_xy_tolerance)"/>
+        <param name="wall_parking_yaw_tolerance" value="$(arg wall_parking_yaw_tolerance)"/>
+        <param name="visual_tracking_parking_enabled" value="$(arg visual_tracking_parking_enabled)"/>
+        <param name="visual_stop_area_ratio" value="$(arg visual_stop_area_ratio)"/>
+        <param name="visual_facing_tolerance_deg" value="$(arg visual_facing_tolerance_deg)"/>
+        <param name="visual_approach_standoff" value="$(arg visual_approach_standoff)"/>
+        <param name="visual_approach_step" value="$(arg visual_approach_step)"/>
+        <param name="visual_goal_xy_tolerance" value="$(arg visual_goal_xy_tolerance)"/>
+        <param name="visual_goal_yaw_tolerance" value="$(arg visual_goal_yaw_tolerance)"/>
+        <param name="visual_goal_update_period" value="$(arg visual_goal_update_period)"/>
         <param name="search_spacing" value="$(arg search_spacing)"/>
         <param name="search_clearance" value="$(arg search_clearance)"/>
+        <param name="search_goal_timeout" value="$(arg search_goal_timeout)"/>
         <param name="line_guidance_enabled" value="$(arg line_guidance_enabled)"/>
         <param name="waypoint_observation_time" value="$(arg waypoint_observation_time)"/>
         <param name="line_scan_hold_time" value="$(arg line_scan_hold_time)"/>

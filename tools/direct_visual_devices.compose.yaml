@@ -1,0 +1,16 @@
+# Only used to start or refresh the ROS1 container for the robot.
+services:
+  ros1:
+    devices:
+      - source: "${ROBOT_BASE_DEVICE}"
+        target: /dev/ttyUSB0
+        permissions: rw
+      - source: "${ROBOT_GIMBAL_DEVICE}"
+        target: /dev/ttyUSB1
+        permissions: rw
+      - source: "${ROBOT_CAMERA_DEVICE}"
+        target: /dev/video4
+        permissions: rw
+    group_add:
+      - "20"
+      - "44"

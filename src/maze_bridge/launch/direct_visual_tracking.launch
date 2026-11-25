@@ -1,0 +1,103 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Mapless blue-marker following. auto_start=true starts when sensors are ready. -->
+  <arg name="auto_start" default="false"/>
+  <arg name="base_port" default="/dev/ttyUSB0"/>
+  <arg name="gimbal_port" default="/dev/ttyUSB1"/>
+  <arg name="camera_device" default="/dev/video4"/>
+  <arg name="camera_info_url" default=""/>
+  <arg name="max_speed" default="0.10"/>
+  <arg name="max_turn" default="0.25"/>
+  <arg name="stop_ratio" default="0.16"/>
+  <arg name="facing_tolerance_deg" default="5.0"/>
+  <arg name="avoid_distance" default="0.65"/>
+  <arg name="target_distance_margin" default="0.25"/>
+  <arg name="safety_stop_distance" default="0.12"/>
+  <arg name="safety_slow_distance" default="0.60"/>
+  <arg name="footprint_file" default="$(find maze_bridge)/config/footprint_stl.yaml"/>
+
+  <node pkg="stm32_bridge" type="serial_bridge_node" name="serial_bridge"
+        output="screen" required="true" clear_params="true">
+    <param name="port" value="$(arg base_port)"/>
+    <param name="baud" value="115200"/>
+    <param name="max_v" value="$(arg max_speed)"/>
+    <param name="max_w" value="0.75"/>
+    <param name="angular_command_sign" value="-1"/>
+    <param name="safety_enable" value="true"/>
+    <param name="safety_stop_distance" value="$(arg safety_stop_distance)"/>
+    <param name="safety_slow_distance" value="$(arg safety_slow_distance)"/>
+    <param name="safety_scan_timeout" value="0.30"/>
+    <param name="safety_rear_stop_distance" value="0.15"/>
+    <param name="safety_prediction_time" value="0.60"/>
+    <param name="safety_prediction_step" value="0.03"/>
+    <param name="safety_collision_padding" value="0.03"/>
+    <param name="navigation_allow_reverse" value="false"/>
+    <param name="joystick_reverse_max_speed" value="0.15"/>
+    <param name="vehicle_footprint_padding" value="0.0"/>
+    <param name="laser_x" value="0.315"/>
+    <param name="laser_y" value="0.0"/>
+    <param name="laser_yaw" value="0.0"/>
+  </node>
+
+  <include file="$(find maze_bridge)/launch/lakibeam1_scan_view_usb.launch">
+    <arg name="show_rviz" value="false"/>
+  </include>
+  <node pkg="stm32_bridge" type="scan_self_filter_node" name="scan_self_filter"
+        output="screen" clear_params="true">
+    <param name="input_topic" value="/scan_raw"/>
+    <param name="output_topic" value="/scan"/>
+    <param name="laser_x" value="0.315"/>
+    <param name="laser_y" value="0.0"/>
+    <param name="laser_yaw" value="0.0"/>
+    <param name="padding" value="0.0"/>
+  </node>
+
+  <include file="$(find maze_bridge)/launch/usb_cam.launch">
+    <arg name="show_image" value="false"/>
+    <arg name="respawn" value="true"/>
+    <arg name="video_device" value="$(arg camera_device)"/>
+    <arg name="camera_info_url" value="$(arg camera_info_url)"/>
+  </include>
+  <node pkg="stm32_bridge" type="blue_detector" name="blue_detector" output="screen">
+    <param name="h_min" value="95"/>
+    <param name="h_max" value="130"/>
+    <param name="s_min" value="140"/>
+    <param name="v_min" value="80"/>
+    <param name="min_pixel_width" value="8"/>
+    <param name="min_pixel_height" value="18"/>
+    <param name="min_aspect" value="0.30"/>
+    <param name="reject_vertical_stripes" value="true"/>
+    <param name="max_aspect" value="1.70"/>
+    <param name="min_fill_ratio" value="0.40"/>
+    <param name="confirm_frames" value="3"/>
+    <param name="clear_frames" value="6"/>
+    <param name="black_line_enabled" value="false"/>
+  </node>
+  <node pkg="stm32_bridge" type="gimbal_bridge_node" name="gimbal_bridge" output="screen">
+    <param name="port" value="$(arg gimbal_port)"/>
+    <param name="baud" value="115200"/>
+    <param name="required" value="true"/>
+    <param name="auto_enable" value="true"/>
+    <param name="center_on_connect" value="true"/>
+    <param name="pan_to_ros_sign" value="-1.0"/>
+    <param name="tilt_to_ros_sign" value="-1.0"/>
+    <param name="invert_target_x" value="true"/>
+    <param name="camera_x" value="0.145"/>
+    <param name="camera_y" value="0.0"/>
+    <param name="camera_z" value="0.42"/>
+  </node>
+
+  <node pkg="maze_planner" type="direct_visual_controller" name="direct_visual_controller"
+        output="screen">
+    <param name="auto_start" value="$(arg auto_start)"/>
+    <param name="require_gimbal" value="true"/>
+    <param name="max_speed" value="$(arg max_speed)"/>
+    <param name="max_turn" value="$(arg max_turn)"/>
+    <param name="stop_ratio" value="$(arg stop_ratio)"/>
+    <param name="facing_tolerance_deg" value="$(arg facing_tolerance_deg)"/>
+    <param name="avoid_distance" value="$(arg avoid_distance)"/>
+    <param name="target_distance_margin" value="$(arg target_distance_margin)"/>
+  </node>
+
+  <rosparam file="$(arg footprint_file)" command="load"/>
+</launch>

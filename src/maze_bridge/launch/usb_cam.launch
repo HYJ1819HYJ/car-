@@ -1,5 +1,6 @@
 <launch>
   <arg name="show_image" default="false"/>
+  <arg name="respawn" default="false"/>
   <!-- 不要长期依赖 /dev/videoN 的枚举顺序；实车建议用 udev 创建的
        /dev/robot_camera，并在上层 launch 覆盖 video_device。 -->
   <arg name="video_device" default="/dev/video4"/>
@@ -7,7 +8,8 @@
   <!-- 标定后传入 file:///绝对路径/camera.yaml；空字符串表示未加载标定。 -->
   <arg name="camera_info_url" default=""/>
 
-  <node name="usb_cam" pkg="usb_cam" type="usb_cam_node" output="screen" >
+  <node name="usb_cam" pkg="usb_cam" type="usb_cam_node" output="screen"
+        respawn="$(arg respawn)" respawn_delay="1.0">
     <param name="video_device" value="$(arg video_device)" />
     <param name="image_width" value="640" />
     <param name="image_height" value="480" />

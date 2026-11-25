@@ -12,17 +12,16 @@
 #include <vector>
 
 /**
- * 红色A4纸终点检测节点
+ * 蓝色A4纸终点检测节点
  * 
  * 订阅: /usb_cam/image_raw
  * 发布: /goal_detected (bool标记 - 检测到终点)
  * 
- * 红色A4纸在HSV空间:
- *   H: 170~179 或 0~10 (跨越色相零点)
- *   当前目标：红色A4纸
+ * 默认 HSV 范围（OpenCV H: 0~179）：H=100~130，S/V>=80。
+ * 可通过私有参数调整，以适应实际摄像头和光照。
  */
 
-// 保留历史节点名、话题和消息类型，兼容导航与云台；默认检测红色。
+// 保留节点名、话题和消息类型，兼容导航与云台。
 class BlueDetector {
 public:
   BlueDetector() : nh_("~") {
@@ -34,10 +33,11 @@ public:
     nh_.param<int>("min_pixel_height", min_pixel_height_, 10);
     nh_.param<double>("min_aspect", min_aspect_, 0.25);
     nh_.param<double>("max_aspect", max_aspect_, 1.70);
+    nh_.param<bool>("reject_vertical_stripes", reject_vertical_stripes_, false);
     nh_.param<int>("confirm_frames", confirm_frames_, 3);
     nh_.param<int>("clear_frames", clear_frames_, 6);
-    nh_.param<int>("h_min", h_min_, 170);
-    nh_.param<int>("h_max", h_max_, 10);
+    nh_.param<int>("h_min", h_min_, 100);
+    nh_.param<int>("h_max", h_max_, 130);
     nh_.param<int>("s_min", s_min_, 80);
     nh_.param<int>("v_min", v_min_, 80);
     nh_.param<bool>("show_debug", show_debug_, false);
@@ -79,8 +79,8 @@ public:
     black_line_pub_ = nh_.advertise<stm32_bridge::BlackLineObservation>(
         "/black_line/observation", 10);
 
-    ROS_INFO("Red-goal detector: ratio>=%.3f contour>=%.3f confirm=%d frames",
-             ratio_threshold_, min_contour_ratio_, confirm_frames_);
+    ROS_INFO("Target detector: H=%d..%d S>=%d V>=%d ratio>=%.3f contour>=%.3f confirm=%d frames",
+             h_min_, h_max_, s_min_, v_min_, ratio_threshold_, min_contour_ratio_, confirm_frames_);
   }
 
 private:
@@ -90,14 +90,14 @@ private:
       cv::Mat hsv;
       cv::cvtColor(cvp->image, hsv, cv::COLOR_BGR2HSV);
 
-      // 红色 HSV 范围
+      // 按配置的 HSV 范围分割目标。
       cv::Scalar lo(h_min_, s_min_, v_min_);
       cv::Scalar hi(h_max_, 255, 255);
       cv::Mat mask;
       if (h_min_ <= h_max_) {
         cv::inRange(hsv, lo, hi, mask);
       } else {
-        // 红色跨越 HSV 色相零点：合并 [h_min,179] 与 [0,h_max]。
+        // 色相范围跨越零点时，合并 [h_min,179] 与 [0,h_max]。
         cv::Mat low_hue_mask;
         cv::inRange(hsv, lo, cv::Scalar(179, 255, 255), mask);
         cv::inRange(hsv, cv::Scalar(0, s_min_, v_min_), hi, low_hue_mask);
@@ -112,11 +112,24 @@ private:
       const double image_area = static_cast<double>(mask.rows) * mask.cols;
       const double ratio = static_cast<double>(cv::countNonZero(mask)) / image_area;
 
-      // 单看红色像素占比容易被红色杂物误触发。必须先在所有轮廓中
+      // 单看目标颜色的像素占比容易被杂物误触发。必须先在所有轮廓中
       // 筛出尺寸、宽高比和填充率像 A4 纸的候选，再选最大的合格候选。
       // 避免较大的背景色块遮蔽真正的纸张。
       std::vector<std::vector<cv::Point>> contours;
       cv::findContours(mask.clone(), contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+      cv::Mat linked_labels, linked_stats;
+      if (reject_vertical_stripes_) {
+        // Reflections can split a long blue wall stripe into short A4-like
+        // contours. Reconnect short vertical gaps only for this context check;
+        // keep the original mask and contour area for target measurements.
+        int gap = std::max(9, static_cast<int>(std::round(mask.rows * 0.08)));
+        if (gap % 2 == 0) ++gap;
+        cv::Mat linked_mask, centroids;
+        cv::morphologyEx(mask, linked_mask, cv::MORPH_CLOSE,
+                         cv::getStructuringElement(cv::MORPH_RECT, cv::Size(3, gap)));
+        cv::connectedComponentsWithStats(linked_mask, linked_labels, linked_stats,
+                                         centroids, 8, CV_32S);
+      }
       double largest_area = 0.0;
       cv::Rect largest_rect;
       double selected_fill_ratio = 0.0;
@@ -132,7 +145,29 @@ private:
             rect.height >= min_pixel_height_ &&
             aspect >= min_aspect_ && aspect <= max_aspect_ &&
             fill >= min_fill_ratio_;
-        if (valid_shape && area > largest_area) {
+        if (!valid_shape) continue;
+        if (reject_vertical_stripes_) {
+          int label = 0;
+          for (const auto& point : contour) {
+            label = linked_labels.at<int>(point);
+            if (label > 0) break;
+          }
+          if (label > 0) {
+            const int linked_width = linked_stats.at<int>(label, cv::CC_STAT_WIDTH);
+            const int linked_height = linked_stats.at<int>(label, cv::CC_STAT_HEIGHT);
+            const double linked_aspect = linked_height > 0
+                ? static_cast<double>(linked_width) / linked_height : 0.0;
+            const bool long_stripe = linked_height > 2 * rect.height &&
+                                     linked_aspect < 0.30;
+            // A narrow stripe cut off by the top or bottom of the image has
+            // no visible endpoint, so wait until a complete target is in view.
+            const bool touches_vertical_edge = rect.y == 0 ||
+                                                rect.y + rect.height == mask.rows;
+            const bool clipped_stripe = touches_vertical_edge && linked_aspect < 0.45;
+            if (long_stripe || clipped_stripe) continue;
+          }
+        }
+        if (area > largest_area) {
           largest_area = area;
           largest_rect = rect;
           selected_fill_ratio = fill;
@@ -258,18 +293,18 @@ private:
                    cv::Point(last_black_line_[2], last_black_line_[3]),
                    cv::Scalar(0, 255, 255), 3);
         }
-        cv::imshow("Red Mask", mask);
+        cv::imshow("Target Mask", mask);
         cv::imshow("Black Line Mask", black_mask);
-        cv::imshow("Red Detector", cvp->image);
+        cv::imshow("Target Detector", cvp->image);
         cv::waitKey(1);
       }
 
       if (observation.detected) {
         ROS_WARN_THROTTLE(1.0,
-                          "Red goal confirmed: ratio=%.3f contour=%.3f fill=%.2f",
+                          "Target confirmed: ratio=%.3f contour=%.3f fill=%.2f",
                           ratio, contour_ratio, fill_ratio);
       } else if (candidate) {
-        ROS_INFO_THROTTLE(1.0, "Red candidate: %d/%d ratio=%.3f",
+        ROS_INFO_THROTTLE(1.0, "Target candidate: %d/%d ratio=%.3f",
                           candidate_frames_, confirm_frames_, ratio);
       }
     } catch (const std::exception& e) {
@@ -293,10 +328,11 @@ private:
   int min_pixel_height_{10};
   double min_aspect_{0.25};
   double max_aspect_{1.70};
+  bool reject_vertical_stripes_{false};
   int confirm_frames_{3};
   int clear_frames_{6};
-  int h_min_{170};
-  int h_max_{10};
+  int h_min_{100};
+  int h_max_{130};
   int s_min_{80};
   int v_min_{80};
   int candidate_frames_{0};

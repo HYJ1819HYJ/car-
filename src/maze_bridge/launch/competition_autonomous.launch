@@ -34,14 +34,16 @@
   <arg name="blue_contour_ratio" default="0.00025"/>
   <arg name="blue_fill_ratio" default="0.40"/>
   <arg name="blue_min_pixel_width" default="8"/>
-  <arg name="blue_min_pixel_height" default="10"/>
-  <arg name="blue_min_aspect" default="0.25"/>
+  <!-- Match the navigator's minimum measurable target height. -->
+  <arg name="blue_min_pixel_height" default="18"/>
+  <!-- A slanted A4 sheet appears narrower than its frontal 0.707 ratio. -->
+  <arg name="blue_min_aspect" default="0.30"/>
   <arg name="blue_max_aspect" default="1.70"/>
   <arg name="blue_confirm_frames" default="3"/>
   <arg name="blue_clear_frames" default="6"/>
-  <arg name="blue_h_min" default="170"/>
-  <arg name="blue_h_max" default="10"/>
-  <arg name="blue_s_min" default="80"/>
+  <arg name="blue_h_min" default="95"/>
+  <arg name="blue_h_max" default="130"/>
+  <arg name="blue_s_min" default="140"/>
   <arg name="blue_v_min" default="80"/>
   <arg name="blue_show_debug" default="false"/>
   <arg name="black_line_enabled" default="true"/>
@@ -54,14 +56,28 @@
   <arg name="black_clear_frames" default="6"/>
   <arg name="line_guidance_enabled" default="true"/>
   <arg name="waypoint_observation_time" default="3.0"/>
+  <arg name="search_goal_timeout" default="90.0"/>
   <arg name="line_scan_hold_time" default="10.0"/>
   <arg name="line_retrigger_cooldown" default="12.0"/>
   <arg name="black_line_timeout" default="0.6"/>
 
   <!-- 终点区实测后必须联动调整：接近点不能比独立前向急停允许的位置更近。 -->
   <arg name="approach_standoff" default="0.65"/>
-  <arg name="approach_clearance" default="0.46"/>
-  <arg name="safety_stop_distance" default="0.15"/>
+  <!-- Static candidate prefilter; whole-footprint planner checks remain active. -->
+  <arg name="approach_clearance" default="0.37"/>
+  <arg name="wall_parking_enabled" default="false"/>
+  <arg name="wall_parking_standoff" default="0.56"/>
+  <arg name="wall_parking_xy_tolerance" default="0.04"/>
+  <arg name="wall_parking_yaw_tolerance" default="0.08"/>
+  <arg name="visual_tracking_parking_enabled" default="true"/>
+  <arg name="visual_stop_area_ratio" default="0.16"/>
+  <arg name="visual_facing_tolerance_deg" default="5.0"/>
+  <arg name="visual_approach_standoff" default="0.48"/>
+  <arg name="visual_approach_step" default="0.05"/>
+  <arg name="visual_goal_xy_tolerance" default="0.04"/>
+  <arg name="visual_goal_yaw_tolerance" default="0.08"/>
+  <arg name="visual_goal_update_period" default="1.0"/>
+  <arg name="safety_stop_distance" default="0.12"/>
   <arg name="safety_slow_distance" default="0.60"/>
 
   <include file="$(find maze_bridge)/launch/navigation_stack.launch">
@@ -111,16 +127,29 @@
     <arg name="black_clear_frames" value="$(arg black_clear_frames)"/>
     <arg name="line_guidance_enabled" value="$(arg line_guidance_enabled)"/>
     <arg name="waypoint_observation_time" value="$(arg waypoint_observation_time)"/>
+    <arg name="search_goal_timeout" value="$(arg search_goal_timeout)"/>
     <arg name="line_scan_hold_time" value="$(arg line_scan_hold_time)"/>
     <arg name="line_retrigger_cooldown" value="$(arg line_retrigger_cooldown)"/>
     <arg name="black_line_timeout" value="$(arg black_line_timeout)"/>
     <arg name="safety_stop_distance" value="$(arg safety_stop_distance)"/>
     <arg name="safety_slow_distance" value="$(arg safety_slow_distance)"/>
 
-    <!-- A4 竖放高度 297 mm；最终接近距离仍远大于15 cm硬急停距离。 -->
+    <!-- A4 竖放高度 297 mm；接近点需结合车体轮廓和前向停车距离核对。 -->
     <arg name="paper_height" value="0.297"/>
     <arg name="approach_standoff" value="$(arg approach_standoff)"/>
     <arg name="approach_clearance" value="$(arg approach_clearance)"/>
+    <arg name="wall_parking_enabled" value="$(arg wall_parking_enabled)"/>
+    <arg name="wall_parking_standoff" value="$(arg wall_parking_standoff)"/>
+    <arg name="wall_parking_xy_tolerance" value="$(arg wall_parking_xy_tolerance)"/>
+    <arg name="wall_parking_yaw_tolerance" value="$(arg wall_parking_yaw_tolerance)"/>
+    <arg name="visual_tracking_parking_enabled" value="$(arg visual_tracking_parking_enabled)"/>
+    <arg name="visual_stop_area_ratio" value="$(arg visual_stop_area_ratio)"/>
+    <arg name="visual_facing_tolerance_deg" value="$(arg visual_facing_tolerance_deg)"/>
+    <arg name="visual_approach_standoff" value="$(arg visual_approach_standoff)"/>
+    <arg name="visual_approach_step" value="$(arg visual_approach_step)"/>
+    <arg name="visual_goal_xy_tolerance" value="$(arg visual_goal_xy_tolerance)"/>
+    <arg name="visual_goal_yaw_tolerance" value="$(arg visual_goal_yaw_tolerance)"/>
+    <arg name="visual_goal_update_period" value="$(arg visual_goal_update_period)"/>
     <arg name="search_spacing" value="1.50"/>
     <arg name="search_clearance" value="0.50"/>
   </include>

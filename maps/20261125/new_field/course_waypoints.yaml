@@ -1,0 +1,7 @@
+# Outbound waypoints from the user-confirmed mapping route; no blue-paper position.
+course_waypoints:
+  - [0.8141, 0.0230]
+  - [1.4955, -0.4273]
+  - [2.2321, -0.7582]
+  - [3.0837, -0.7802]
+  - [3.5574, -0.6664]

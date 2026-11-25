@@ -9,6 +9,7 @@ project(maze_planner)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
   actionlib
+  dynamic_reconfigure
   geometry_msgs
   move_base_msgs
   nav_msgs
@@ -110,7 +111,7 @@ find_package(catkin REQUIRED COMPONENTS
 ## CATKIN_DEPENDS: catkin_packages dependent projects also need
 ## DEPENDS: system dependencies of this project that dependent projects also need
 catkin_package(
-  CATKIN_DEPENDS actionlib geometry_msgs move_base_msgs nav_msgs roscpp sensor_msgs stm32_bridge std_msgs tf2 tf2_ros
+  CATKIN_DEPENDS actionlib dynamic_reconfigure geometry_msgs move_base_msgs nav_msgs roscpp sensor_msgs stm32_bridge std_msgs tf2 tf2_ros
 )
 
 ###########
@@ -120,7 +121,7 @@ catkin_package(
 ## Specify additional locations of header files
 ## Your package locations should be listed before other locations
 include_directories(
-# include
+  include
   ${catkin_INCLUDE_DIRS}
 )
 
@@ -141,6 +142,8 @@ include_directories(
 add_executable(maze_controller_node src/maze_controller_node.cpp)
 add_executable(teach_repeat_node src/teach_repeat_node.cpp)
 add_executable(blue_goal_navigator src/blue_goal_navigator.cpp)
+add_executable(direct_visual_controller src/direct_visual_controller.cpp)
+add_executable(visual_handoff_manager src/visual_handoff_manager.cpp)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
@@ -160,6 +163,33 @@ target_link_libraries(maze_controller_node ${catkin_LIBRARIES})
 target_link_libraries(teach_repeat_node ${catkin_LIBRARIES})
 target_link_libraries(blue_goal_navigator ${catkin_LIBRARIES})
 add_dependencies(blue_goal_navigator ${catkin_EXPORTED_TARGETS})
+target_link_libraries(direct_visual_controller ${catkin_LIBRARIES})
+add_dependencies(direct_visual_controller ${catkin_EXPORTED_TARGETS})
+target_link_libraries(visual_handoff_manager ${catkin_LIBRARIES})
+add_dependencies(visual_handoff_manager ${catkin_EXPORTED_TARGETS})
+
+if(CATKIN_ENABLE_TESTING)
+  catkin_add_gtest(search_waypoint_order_test test/search_waypoint_order_test.cpp)
+  if(TARGET search_waypoint_order_test)
+    target_link_libraries(search_waypoint_order_test ${catkin_LIBRARIES})
+  endif()
+  catkin_add_gtest(wall_parking_test test/wall_parking_test.cpp)
+  if(TARGET wall_parking_test)
+    target_link_libraries(wall_parking_test ${catkin_LIBRARIES})
+  endif()
+  catkin_add_gtest(visual_tracking_test test/visual_tracking_test.cpp)
+  if(TARGET visual_tracking_test)
+    target_link_libraries(visual_tracking_test ${catkin_LIBRARIES})
+  endif()
+  catkin_add_gtest(direct_reactive_test test/direct_reactive_test.cpp)
+  if(TARGET direct_reactive_test)
+    target_link_libraries(direct_reactive_test ${catkin_LIBRARIES})
+  endif()
+  catkin_add_gtest(handoff_corridor_test test/handoff_corridor_test.cpp)
+  if(TARGET handoff_corridor_test)
+    target_link_libraries(handoff_corridor_test ${catkin_LIBRARIES})
+  endif()
+endif()
 
 #############
 
