@@ -6,8 +6,8 @@
   <arg name="gimbal_port" default="/dev/ttyUSB1"/>
   <arg name="camera_device" default="/dev/video4"/>
   <arg name="camera_info_url" default=""/>
-  <arg name="max_speed" default="0.10"/>
-  <arg name="max_turn" default="0.25"/>
+  <arg name="max_speed" default="0.30"/>
+  <arg name="max_turn" default="0.50"/>
   <arg name="stop_ratio" default="0.16"/>
   <arg name="facing_tolerance_deg" default="5.0"/>
   <arg name="avoid_distance" default="0.65"/>
@@ -22,6 +22,8 @@
     <param name="baud" value="115200"/>
     <param name="max_v" value="$(arg max_speed)"/>
     <param name="max_w" value="0.75"/>
+    <param name="cmd_max_v" value="$(arg max_speed)"/>
+    <param name="cmd_max_w" value="$(arg max_turn)"/>
     <param name="angular_command_sign" value="-1"/>
     <param name="safety_enable" value="true"/>
     <param name="safety_stop_distance" value="$(arg safety_stop_distance)"/>
@@ -60,15 +62,15 @@
   </include>
   <node pkg="stm32_bridge" type="blue_detector" name="blue_detector" output="screen">
     <param name="h_min" value="95"/>
-    <param name="h_max" value="130"/>
-    <param name="s_min" value="140"/>
-    <param name="v_min" value="80"/>
+    <param name="h_max" value="135"/>
+    <param name="s_min" value="90"/>
+    <param name="v_min" value="55"/>
     <param name="min_pixel_width" value="8"/>
     <param name="min_pixel_height" value="18"/>
-    <param name="min_aspect" value="0.30"/>
+    <param name="min_aspect" value="0.28"/>
     <param name="reject_vertical_stripes" value="true"/>
     <param name="max_aspect" value="1.70"/>
-    <param name="min_fill_ratio" value="0.40"/>
+    <param name="min_fill_ratio" value="0.38"/>
     <param name="confirm_frames" value="3"/>
     <param name="clear_frames" value="6"/>
     <param name="black_line_enabled" value="false"/>
@@ -94,6 +96,8 @@
     <param name="max_speed" value="$(arg max_speed)"/>
     <param name="max_turn" value="$(arg max_turn)"/>
     <param name="stop_ratio" value="$(arg stop_ratio)"/>
+    <param name="gimbal_sweep_hold_time" value="2.6"/>
+    <param name="fallback_hfov_deg" value="88.0"/>
     <param name="facing_tolerance_deg" value="$(arg facing_tolerance_deg)"/>
     <param name="avoid_distance" value="$(arg avoid_distance)"/>
     <param name="target_distance_margin" value="$(arg target_distance_margin)"/>

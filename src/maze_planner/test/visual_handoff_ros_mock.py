@@ -33,7 +33,8 @@ rospy.Subscriber('/goal_reached', Bool, lambda m: goals.append((time.monotonic()
 proc = subprocess.Popen(['rosrun','maze_planner','visual_handoff_manager',
                          '__name:=visual_handoff_manager'])
 
-def run_phase(detected, obstacle=False, foreground_wall=False, area=.02, goal=False, duration=1.3):
+def run_phase(detected, obstacle=False, foreground_wall=False, wall_x=1.15,
+              area=.02, goal=False, duration=1.3):
     start = time.monotonic()
     rate = rospy.Rate(20)
     while time.monotonic()-start < duration and not rospy.is_shutdown():
@@ -50,13 +51,13 @@ def run_phase(detected, obstacle=False, foreground_wall=False, area=.02, goal=Fa
         for i in range(1440):
             a = scan.angle_min+i*scan.angle_increment
             if math.cos(a) > .2:
-                wall_x = 1.45 if foreground_wall else 2.0
-                scan.ranges[i] = (wall_x-.315)/math.cos(a)
+                lidar_wall_x = .50 if foreground_wall else wall_x
+                scan.ranges[i] = (lidar_wall_x-.315)/math.cos(a)
         if obstacle:
-            a = math.atan2(.15, 1.0-.315)
+            a = math.atan2(.11, .65-.315)
             beam = round((a-scan.angle_min)/scan.angle_increment)
             for i in range(beam-4,beam+5):
-                scan.ranges[i] = math.hypot(1.0-.315,.15)
+                scan.ranges[i] = math.hypot(.65-.315,.11)
         scan_pub.publish(scan)
         joint = JointState()
         joint.header.stamp = stamp
@@ -68,7 +69,7 @@ def run_phase(detected, obstacle=False, foreground_wall=False, area=.02, goal=Fa
         obs.detected = detected
         obs.image_width, obs.image_height = 640, 480
         obs.center_x, obs.center_y = 320, 240
-        obs.pixel_height = 640/(2*math.tan(math.radians(35)))*.297/(2.0-.145)
+        obs.pixel_height = 640/(2*math.tan(math.radians(44)))*.297/(wall_x-.145)
         obs.pixel_width = .7*obs.pixel_height
         obs.contour_ratio = area
         obs_pub.publish(obs)
@@ -83,6 +84,7 @@ def run_phase(detected, obstacle=False, foreground_wall=False, area=.02, goal=Fa
 
 try:
     missing = run_phase(False)
+    far = run_phase(True, wall_x=2.0)
     mismatch = run_phase(True, foreground_wall=True, duration=1.5)
     blocked = run_phase(True, obstacle=True, duration=1.6)
     clear = run_phase(True, duration=2.0)
@@ -106,7 +108,8 @@ print('goal:', goals)
 print('latest commands:', {n: output(i)[-3:] for n,i in
                            [('missing',missing),('mismatch',mismatch),('blocked',blocked),('clear',clear),('visual',visual),('finish',finish)]})
 assert any(abs(v-.071)<1e-6 for v,w in output(missing)), 'Navigation commands not forwarded initially'
-assert any('target distances differ' in s and mismatch[0] <= t < mismatch[1] for t,s in states), 'Foreground surface was confused with the marker wall'
+assert any(abs(v-.071)<1e-6 for v,w in output(far)), 'Long range did not retain navigation'
+assert any(abs(v-.071)<1e-6 for v,w in output(mismatch)), 'Foreground wall took control'
 assert any(abs(v-.071)<1e-6 for v,w in output(blocked)), 'Blocked corridor did not keep navigation'
 assert not any(v and t < clear[0] for t,v in visual_enable), 'Switched before the corridor cleared'
 assert any(v and clear[0] <= t < clear[1] for t,v in visual_enable), 'Clear corridor did not trigger visual mode'

@@ -44,7 +44,9 @@ struct WallObservation {
 // Fit an observed wall around the blue-paper bearing, allowing paper-sized gaps.
 inline bool fitTargetWall(const std::vector<Point2>& scan, const Point2& camera,
                           double bearing, WallObservation* wall,
-                          double max_distance = 4.0) {
+                          double max_distance = 4.0,
+                          double expected_distance = 0.0,
+                          double range_tolerance = std::numeric_limits<double>::infinity()) {
   if (!wall || !std::isfinite(bearing) || !std::isfinite(max_distance) ||
       max_distance <= 0.15) return false;
   const Point2 ray(std::cos(bearing), std::sin(bearing));
@@ -58,7 +60,7 @@ inline bool fitTargetWall(const std::vector<Point2>& scan, const Point2& camera,
     if (forward > 0.15 && forward < max_distance && std::fabs(dot(delta, across)) < 0.55)
       points.push_back(point);
   }
-  if (points.size() < 20) return false;
+  if (points.size() < 8) return false;
 
   std::mt19937 generator(20261124);
   std::uniform_int_distribution<std::size_t> pick(0, points.size() - 1);
@@ -76,6 +78,9 @@ inline bool fitTargetWall(const std::vector<Point2>& scan, const Point2& camera,
     if (std::fabs(denominator) < 0.35) continue;
     const double distance = dot(normal, a - camera) / denominator;
     if (distance <= 0.15 || distance >= max_distance) continue;
+    if (std::fabs(distance - expected_distance) > range_tolerance) continue;
+    const std::size_t min_inliers = distance > 3.5
+        ? std::max(8, static_cast<int>(50.0 / distance)) : 20;
     std::vector<std::size_t> inliers;
     double lo = std::numeric_limits<double>::infinity();
     double hi = -std::numeric_limits<double>::infinity();
@@ -86,7 +91,7 @@ inline bool fitTargetWall(const std::vector<Point2>& scan, const Point2& camera,
       lo = std::min(lo, projection);
       hi = std::max(hi, projection);
     }
-    if (inliers.size() < 20 || hi - lo < 0.30) continue;
+    if (inliers.size() < min_inliers || hi - lo < 0.35) continue;
     const Point2 intersection = camera + distance * ray;
     const double projection = dot(intersection, tangent);
     if (projection < lo - 0.15 || projection > hi + 0.15) continue;
@@ -114,7 +119,8 @@ inline bool fitTargetWall(const std::vector<Point2>& scan, const Point2& camera,
   const double denominator = dot(normal, ray);
   if (std::fabs(denominator) < 0.35) return false;
   const double distance = dot(normal, mean - camera) / denominator;
-  if (distance <= 0.15 || distance >= max_distance) return false;
+  if (distance <= 0.15 || distance >= max_distance ||
+      std::fabs(distance - expected_distance) > range_tolerance) return false;
   wall->marker = camera + distance * ray;
   wall->outward = normal;
   wall->inliers = best.size();
@@ -133,14 +139,14 @@ inline double parkingYaw(const WallObservation& wall) {
 inline bool footprintInsideFinish(const WallObservation& wall,
                                   const Point2& robot, double yaw,
                                   const std::vector<Point2>& footprint,
-                                  double size = 0.8) {
+                                  double size = 0.8, double margin = 0.0) {
   if (footprint.size() < 3) return false;
   const Point2 tangent(-wall.outward.y, wall.outward.x);
   for (const Point2& vertex : footprint) {
     const Point2 delta = robot + rotate(vertex, yaw) - wall.marker;
     const double depth = dot(delta, wall.outward);
     const double lateral = dot(delta, tangent);
-    if (depth < 0.0 || depth > size || std::fabs(lateral) > size * 0.5)
+    if (depth < margin || depth > size - margin || std::fabs(lateral) > size * 0.5 - margin)
       return false;
   }
   return true;

@@ -87,7 +87,7 @@ print('states:', [s for _,s in states])
 print('phase commands:', {name: sampled(interval)[-3:] for name,interval in
                          [('search',search),('turn',turn),('follow',follow),('avoid',avoid),('align',align),('finish',finish)]})
 print('goal_reached:',done)
-assert any(v == 0 and w > 0 for v,w in sampled(search)), 'Search did not rotate'
+assert sampled(search) and all(v == 0 and w == 0 for v,w in sampled(search)),     'Base rotated during the initial gimbal-only search'
 assert any(v == 0 and w < 0 for v,w in sampled(turn)), 'Right-side target did not turn right'
 assert any(v > 0 and abs(w) < .01 for v,w in sampled(follow)), 'Centered target did not drive forward'
 assert any(v >= 0 and w < -.1 for v,w in sampled(avoid)), 'Left obstacle did not steer away'

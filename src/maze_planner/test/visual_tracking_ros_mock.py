@@ -27,6 +27,7 @@ mutex = threading.Lock()
 pose = [0.0, 0.0, 0.0]
 target = (2.0, -.5)
 goals = []
+approach_goals = []
 states = []
 done = []
 second_goal_at = [None]
@@ -53,10 +54,14 @@ def execute(goal):
     with mutex:
         goals.append((p.x, p.y, yaw))
         count = len(goals)
-        approach_count = count - int(start_unseen)
-        if start_unseen and count == 1:
+        # An initial search can win the startup race against the first
+        # camera observation. The fixture's search point is far from the marker.
+        if count == 1 and (start_unseen or math.hypot(p.x - target[0], p.y - target[1]) > 1.2):
             search_goal_at[0] = time.monotonic()
-        elif approach_count == 1:
+        else:
+            approach_goals.append((p.x, p.y, yaw))
+        approach_count = len(approach_goals)
+        if approach_count == 1:
             if early_success:
                 # Simulate move_base reporting success before the visual
                 # marker is large enough to satisfy the stopping condition.
@@ -138,10 +143,9 @@ try:
     while not rospy.is_shutdown() and time.monotonic()-start < 20 and not any(v for _,v in done):
         with mutex:
             x, y, yaw = pose
-            count = len(goals)
+            approach_count = len(approach_goals)
             goal_time = second_goal_at[0]
             search_time = search_goal_at[0]
-        approach_count = max(0, count - int(start_unseen))
         now = rospy.Time.now()
         tf = TransformStamped()
         tf.header.stamp = now
@@ -211,7 +215,6 @@ print('goals:', goals)
 print('preempted:', preempted)
 print('goal_reached:', done)
 assert any(value for _,value in done), 'Visual area/facing condition did not stop the mock'
-approach_goals = goals[int(start_unseen):]
 assert len(approach_goals) >= 2, 'The target direction was not updated after the detour'
 if early_success:
     first_range = math.hypot(approach_goals[0][0]-target[0], approach_goals[0][1]-target[1])
@@ -223,7 +226,7 @@ else:
 reached_at = next(stamp for stamp,value in done if value)
 assert second_goal_at[0] is not None and reached_at-second_goal_at[0] >= .35, 'Stopped before facing the target'
 if not early_success:
-    assert 1 + int(start_unseen) in preempted, 'The first approach goal was not updated after the bearing changed'
+    assert 1 + int(search_goal_at[0] is not None) in preempted, 'The first approach goal was not updated after the bearing changed'
 assert any(abs(c.get('xy_goal_tolerance', 0)-.04) < 1e-6 for c in reconfigurations), 'Visual goal tolerance was not applied'
 assert any(abs(c.get('xy_goal_tolerance', 0)-.12) < 1e-6 for c in reconfigurations), 'Original goal tolerance was not restored'
 if start_unseen:

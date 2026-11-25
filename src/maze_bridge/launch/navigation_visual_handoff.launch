@@ -6,7 +6,6 @@
   <arg name="initial_pose_x"/>
   <arg name="initial_pose_y"/>
   <arg name="initial_pose_a"/>
-  <arg name="course_waypoints_file" default=""/>
   <arg name="auto_start" default="true"/>
   <arg name="show_rviz" default="false"/>
   <arg name="base_port" default="/dev/ttyUSB0"/>
@@ -14,18 +13,19 @@
   <arg name="camera_device" default="/dev/video4"/>
   <arg name="camera_info_url" default=""/>
   <arg name="lidar_self_echo_config" default=""/>
-  <arg name="max_speed" default="0.10"/>
-  <arg name="max_turn" default="0.25"/>
+  <arg name="max_speed" default="1.00"/>
+  <arg name="max_turn" default="1.00"/>
+  <arg name="visual_max_speed" default="0.30"/>
+  <arg name="visual_max_turn" default="0.50"/>
   <arg name="stop_ratio" default="0.16"/>
   <arg name="facing_tolerance_deg" default="5.0"/>
   <arg name="safety_stop_distance" default="0.12"/>
   <arg name="clear_scans" default="3"/>
+  <arg name="max_handoff_distance" default="1.30"/>
   <arg name="max_target_range" default="8.0"/>
   <arg name="range_absolute_tolerance" default="0.25"/>
-  <arg name="range_relative_tolerance" default="0.20"/>
+  <arg name="range_relative_tolerance" default="0.30"/>
   <arg name="corridor_check_standoff" default="0.48"/>
-  <arg name="finish_observation_distance" default="0.90"/>
-  <arg name="finish_max_lateral_error" default="0.20"/>
   <arg name="max_sensor_skew" default="0.5"/>
 
   <!-- Hardware and navigation are started once. The two motion controllers
@@ -43,8 +43,7 @@
     <arg name="camera_info_url" value="$(arg camera_info_url)"/>
     <arg name="lidar_self_echo_config" value="$(arg lidar_self_echo_config)"/>
     <arg name="max_v" value="$(arg max_speed)"/>
-    <arg name="max_nav_v" value="$(arg max_speed)"/>
-    <arg name="max_nav_w" value="$(arg max_turn)"/>
+    <arg name="max_w" value="$(arg max_turn)"/>
     <arg name="safety_stop_distance" value="$(arg safety_stop_distance)"/>
     <arg name="safety_slow_distance" value="0.60"/>
     <arg name="safety_collision_padding" value="0.03"/>
@@ -56,11 +55,15 @@
     <arg name="gimbal_pan_to_ros_sign" value="-1.0"/>
     <arg name="enable_blue_autonomy" value="false"/>
     <arg name="blue_h_min" value="95"/>
-    <arg name="blue_h_max" value="130"/>
-    <arg name="blue_s_min" value="140"/>
-    <arg name="blue_min_aspect" value="0.30"/>
+    <arg name="blue_h_max" value="135"/>
+    <arg name="blue_s_min" value="90"/>
+    <arg name="blue_min_aspect" value="0.28"/>
     <arg name="blue_reject_vertical_stripes" value="true"/>
-    <arg name="blue_min_pixel_height" value="18"/>
+    <arg name="blue_v_min" value="55"/>
+    <arg name="blue_fill_ratio" value="0.38"/>
+    <arg name="blue_min_pixel_width" value="5"/>
+    <arg name="blue_min_pixel_height" value="7"/>
+    <arg name="fallback_hfov_deg" value="88.0"/>
     <arg name="black_line_enabled" value="false"/>
   </include>
 
@@ -71,18 +74,26 @@
     <param name="auto_start" value="false"/>
     <param name="start_delay" value="0.0"/>
     <param name="search_enabled" value="true"/>
-    <param name="acquire_target_in_navigation" value="false"/>
-    <param name="hold_at_course_end" value="true"/>
-    <param name="prefer_forward_search" value="true"/>
+    <param name="competition_mode" value="true"/>
+    <param name="origin_start_x" value="$(arg initial_pose_x)"/>
+    <param name="origin_start_y" value="$(arg initial_pose_y)"/>
+    <param name="fallback_hfov_deg" value="88.0"/>
+    <param name="min_pixel_height" value="7"/>
+    <param name="target_sample_count" value="4"/>
+    <param name="target_sample_max_age" value="0.8"/>
+    <param name="target_max_stddev" value="0.25"/>
+    <param name="goal_update_distance" value="0.12"/>
+    <param name="goal_update_period" value="0.60"/>
+    <param name="waypoint_observation_time" value="2.6"/>
+    <param name="max_target_range" value="$(arg max_target_range)"/>
+    <param name="acquire_target_in_navigation" value="true"/>
     <param name="line_guidance_enabled" value="false"/>
-    <rosparam if="$(eval arg('course_waypoints_file') != '')" command="load" file="$(arg course_waypoints_file)"/>
     <param name="require_localization" value="true"/>
     <param name="require_gimbal" value="true"/>
     <param name="require_camera_info" value="false"/>
-    <param name="approach_clearance" value="0.37"/>
-    <param name="search_goal_timeout" value="90.0"/>
+    <param name="search_goal_timeout" value="30.0"/>
     <param name="visual_tracking_parking_enabled" value="false"/>
-    <param name="wall_parking_enabled" value="false"/>
+    <param name="wall_parking_enabled" value="true"/>
   </node>
 
   <node pkg="maze_planner" type="direct_visual_controller" name="handoff_direct_visual" output="screen">
@@ -92,21 +103,26 @@
     <remap from="/cmd_vel" to="/handoff/cmd_vel_visual"/>
     <param name="auto_start" value="false"/>
     <param name="require_gimbal" value="true"/>
-    <param name="max_speed" value="$(arg max_speed)"/>
-    <param name="max_turn" value="$(arg max_turn)"/>
+    <param name="max_speed" value="$(eval min(float(arg('visual_max_speed')), float(arg('max_speed'))))"/>
+    <param name="max_turn" value="$(eval min(float(arg('visual_max_turn')), float(arg('max_turn'))))"/>
     <param name="stop_ratio" value="$(arg stop_ratio)"/>
+    <param name="terminal_only" value="true"/>
+    <param name="gimbal_sweep_hold_time" value="2.6"/>
+    <param name="metric_stop_depth_min" value="0.48"/>
+    <param name="metric_stop_depth_max" value="0.63"/>
+    <param name="fallback_hfov_deg" value="88.0"/>
     <param name="facing_tolerance_deg" value="$(arg facing_tolerance_deg)"/>
   </node>
 
   <node pkg="maze_planner" type="visual_handoff_manager" name="visual_handoff_manager" output="screen">
     <param name="auto_start" value="$(arg auto_start)"/>
+    <param name="competition_mode" value="true"/>
+    <param name="max_handoff_distance" value="$(arg max_handoff_distance)"/>
     <param name="required_clear_scans" value="$(arg clear_scans)"/>
     <param name="max_target_range" value="$(arg max_target_range)"/>
     <param name="range_absolute_tolerance" value="$(arg range_absolute_tolerance)"/>
     <param name="range_relative_tolerance" value="$(arg range_relative_tolerance)"/>
     <param name="corridor_check_standoff" value="$(arg corridor_check_standoff)"/>
-    <param name="finish_observation_distance" value="$(arg finish_observation_distance)"/>
-    <param name="finish_max_lateral_error" value="$(arg finish_max_lateral_error)"/>
     <param name="max_sensor_skew" value="$(arg max_sensor_skew)"/>
   </node>
 </launch>

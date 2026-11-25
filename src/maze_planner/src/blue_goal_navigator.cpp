@@ -3,6 +3,7 @@
 #include <actionlib/client/simple_action_client.h>
 #include <dynamic_reconfigure/Reconfigure.h>
 #include <geometry_msgs/PoseStamped.h>
+#include <geometry_msgs/Twist.h>
 #include <geometry_msgs/PoseWithCovarianceStamped.h>
 #include <move_base_msgs/MoveBaseAction.h>
 #include <nav_msgs/OccupancyGrid.h>
@@ -22,6 +23,9 @@
 #include <maze_planner/wall_parking.h>
 #include <maze_planner/visual_tracking.h>
 #include <maze_planner/search_waypoint_order.h>
+#include <maze_planner/corridor_explorer.h>
+#include <maze_planner/gimbal_history.h>
+#include <maze_planner/navigation_grid.h>
 #include <XmlRpcException.h>
 #include <XmlRpcValue.h>
 
@@ -34,6 +38,10 @@
 #include <vector>
 
 namespace {
+
+double yawDifference(double from, double to) {
+  return std::atan2(std::sin(to - from), std::cos(to - from));
+}
 
 double clampValue(double value, double low, double high) {
   return std::max(low, std::min(high, value));
@@ -73,6 +81,12 @@ class BlueGoalNavigator {
     pnh_.param<bool>("search_enabled", search_enabled_, true);
     pnh_.param<bool>("acquire_target_in_navigation", acquire_target_in_navigation_, true);
     pnh_.param<bool>("hold_at_course_end", hold_at_course_end_, false);
+    pnh_.param<bool>("competition_mode", competition_mode_, false);
+    pnh_.param<double>("origin_start_x", origin_start_.x,
+                       std::numeric_limits<double>::quiet_NaN());
+    pnh_.param<double>("origin_start_y", origin_start_.y,
+                       std::numeric_limits<double>::quiet_NaN());
+    pnh_.param<double>("waypoint_pass_radius", waypoint_pass_radius_, 0.0);
     pnh_.param<bool>("require_localization", require_localization_, true);
     pnh_.param<bool>("require_gimbal", require_gimbal_, false);
     pnh_.param<bool>("require_camera_info", require_camera_info_, false);
@@ -148,6 +162,13 @@ class BlueGoalNavigator {
     camera_info_sub_ = nh_.subscribe("/usb_cam/camera_info", 2,
                                      &BlueGoalNavigator::cameraInfoCb, this);
     map_sub_ = nh_.subscribe("/map", 1, &BlueGoalNavigator::mapCb, this);
+    if (competition_mode_) {
+      costmap_sub_ = nh_.subscribe("/move_base/global_costmap/costmap", 1,
+                                  &BlueGoalNavigator::costmapCb, this);
+      observe_cmd_pub_ = nh_.advertise<geometry_msgs::Twist>("/handoff/cmd_vel_nav", 1);
+      terminal_sub_ = nh_.subscribe("/handoff/visual_enable", 1,
+                                    &BlueGoalNavigator::terminalCb, this);
+    }
     amcl_sub_ = nh_.subscribe("/amcl_pose", 2, &BlueGoalNavigator::amclCb, this);
     joint_sub_ = nh_.subscribe("/gimbal/joint_states", 5,
                                &BlueGoalNavigator::jointCb, this);
@@ -159,14 +180,10 @@ class BlueGoalNavigator {
                                        &BlueGoalNavigator::gimbalLockedCb, this);
     enable_sub_ = nh_.subscribe("/blue_autonomy/enable", 2,
                                 &BlueGoalNavigator::enableCb, this);
-    if (hold_at_course_end_ && !acquire_target_in_navigation_) {
-      finish_observation_sub_ = nh_.subscribe("/handoff/finish_observation_goal", 1,
-          &BlueGoalNavigator::finishObservationCb, this);
-    }
     tolerance_client_ = nh_.serviceClient<dynamic_reconfigure::Reconfigure>(
         "/move_base/TebLocalPlannerROS/set_parameters");
     loadFootprint();
-    loadCourseWaypoints();
+    if (!competition_mode_) loadCourseWaypoints();
 
     state_pub_ = nh_.advertise<std_msgs::String>("/blue_autonomy/state", 1, true);
     target_pose_pub_ = nh_.advertise<geometry_msgs::PoseStamped>(
@@ -182,7 +199,7 @@ class BlueGoalNavigator {
     setState(enabled_ ? State::WAIT_SYSTEM : State::IDLE,
              enabled_ ? "waiting for navigation, localization and camera" :
                         "disabled; publish true on /blue_autonomy/enable");
-    timer_ = nh_.createTimer(ros::Duration(0.10), &BlueGoalNavigator::timerCb, this);
+    timer_ = nh_.createTimer(ros::Duration(competition_mode_ ? .04 : .10), &BlueGoalNavigator::timerCb, this);
   }
 
  private:
@@ -196,6 +213,8 @@ class BlueGoalNavigator {
     double y{0.0};
     double range{0.0};
     ros::Time stamp;
+    maze_planner::Point2 outward;
+    bool wall_valid{false};
   };
 
   struct Point2D {
@@ -431,9 +450,19 @@ class BlueGoalNavigator {
       goal_kind_ = GoalKind::NONE;
       search_index_ = 0;
       course_index_ = 0;
-      finish_observation_attempted_ = false;
-      current_goal_is_course_ = false;
+      explorer_started_ = false;
+      rejected_entrances_.clear();
       estimates_.clear();
+      target_visible_ = false;
+      target_pose_valid_ = false;
+      target_locked_ = false;
+      last_target_seen_time_ = ros::Time(0);
+      last_search_check_ = ros::Time(0);
+      entrance_unavailable_since_ = ros::Time();
+      target_reacquire_after_ = ros::Time();
+      arrival_time_ = ros::Time();
+      pending_observation_.reset();
+      current_goal_is_course_ = false;
       current_visual_standoff_ = visual_approach_standoff_;
       setParkingTolerance(false);
       black_line_visible_ = false;
@@ -477,6 +506,7 @@ class BlueGoalNavigator {
   }
 
   void jointCb(const sensor_msgs::JointState::ConstPtr& msg) {
+    if (competition_mode_) gimbal_history_.add(*msg);
     for (std::size_t i = 0; i < msg->name.size() && i < msg->position.size(); ++i) {
       if (msg->name[i] == "camera_pan_joint") pan_angle_ = msg->position[i];
       if (msg->name[i] == "camera_tilt_joint") tilt_angle_ = msg->position[i];
@@ -496,11 +526,11 @@ class BlueGoalNavigator {
     gimbal_locked_ = msg->data;
   }
 
-  bool robotPose(double* x, double* y, double* yaw) {
+  bool robotPose(double* x, double* y, double* yaw, const ros::Time& stamp = ros::Time(0)) {
     try {
       const geometry_msgs::TransformStamped transform =
-          tf_buffer_.lookupTransform(map_frame_, base_frame_, ros::Time(0),
-                                     ros::Duration(0.05));
+          tf_buffer_.lookupTransform(map_frame_, base_frame_, stamp,
+                                     ros::Duration(stamp.isZero() ? .05 : 0.0));
       *x = transform.transform.translation.x;
       *y = transform.transform.translation.y;
       *yaw = yawFromQuaternion(transform.transform.rotation);
@@ -565,10 +595,17 @@ class BlueGoalNavigator {
     last_target_seen_time_ = ros::Time::now();
     if (!enabled_ || state_ == State::COMPLETE) return;
 
+    if (competition_mode_) {
+      if (msg->header.stamp >= mission_enable_time_ &&
+          msg->header.stamp >= target_reacquire_after_ && !terminal_active_)
+        pending_observation_ = msg;
+      return;
+    }
+
     // 已经连续确认蓝纸时先停车获取稳定观测，避免云台锁定期间底盘仍在
     // 沿搜索路径运动。之后只有锁定且位置样本稳定才会发送接近目标。
-    if (state_ == State::SEARCH || state_ == State::OBSERVE ||
-        state_ == State::LINE_SCAN) {
+    if (!competition_mode_ && (state_ == State::SEARCH || state_ == State::OBSERVE ||
+        state_ == State::LINE_SCAN)) {
       if (goal_active_) move_base_.cancelGoal();
       goal_active_ = false;
       goal_kind_ = GoalKind::NONE;
@@ -587,10 +624,14 @@ class BlueGoalNavigator {
     // Visual following uses the measured pan and the current image offset even
     // while the firmware's lock flag flickers; estimateTarget still requires a
     // fresh joint reading when a gimbal is configured.
-    if (require_gimbal_ && !gimbal_locked_ && !visual_tracking_parking_enabled_) return;
+    if (!competition_mode_ && require_gimbal_ && !gimbal_locked_ && !visual_tracking_parking_enabled_) return;
 
     TargetEstimate estimate;
-    if (!estimateTarget(*msg, &estimate)) return;
+    if (estimateTarget(*msg, &estimate)) addEstimate(estimate);
+  }
+
+  void addEstimate(const TargetEstimate& estimate) {
+    if (!estimates_.empty() && estimate.stamp <= estimates_.back().stamp) return;
     target_pose_valid_ = true;
     latest_target_ = estimate;
     estimates_.push_back(estimate);
@@ -634,12 +675,22 @@ class BlueGoalNavigator {
         slant_range > max_target_range_) return false;
 
     const bool fresh_gimbal = (ros::Time::now() - last_joint_time_).toSec() <= 1.5;
-    if (require_gimbal_ && !fresh_gimbal) return false;
-    const double pan = fresh_gimbal ? pan_angle_ : 0.0;
-    const double tilt = fresh_gimbal ? tilt_angle_ : 0.0;
+    double pan = fresh_gimbal ? pan_angle_ : 0.0;
+    double tilt = fresh_gimbal ? tilt_angle_ : 0.0;
+    if (competition_mode_) {
+      pan = tilt = 0.0;
+      if (!gimbal_history_.angles(observation.header.stamp, &pan, &tilt) && require_gimbal_)
+        return false;
+    } else if (require_gimbal_ && !fresh_gimbal) {
+      return false;
+    }
     const double pixel_bearing = std::atan2(cx - observation.center_x, fx);
     const double pixel_down_angle = std::atan2(observation.center_y - cy, fy);
-    const double bearing = pan + pixel_bearing;
+    double bearing = pan + pixel_bearing;
+    if (competition_mode_ &&
+        !maze_planner::visualBearing(pan, tilt, observation.center_x,
+                                     observation.center_y, cx, cy, fx, fy, &bearing))
+      return false;
     const double down_angle = tilt + pixel_down_angle;
     const double horizontal_range = slant_range * std::cos(down_angle);
     if (!std::isfinite(horizontal_range) || horizontal_range <= 0.0) return false;
@@ -647,13 +698,21 @@ class BlueGoalNavigator {
     double robot_x = 0.0;
     double robot_y = 0.0;
     double robot_yaw = 0.0;
-    if (!robotPose(&robot_x, &robot_y, &robot_yaw)) return false;
+    if (!robotPose(&robot_x, &robot_y, &robot_yaw,
+                   competition_mode_ ? observation.header.stamp : ros::Time(0))) return false;
     const double local_x = camera_x_ + horizontal_range * std::cos(bearing);
     const double local_y = camera_y_ + horizontal_range * std::sin(bearing);
     estimate->x = robot_x + std::cos(robot_yaw) * local_x - std::sin(robot_yaw) * local_y;
     estimate->y = robot_y + std::sin(robot_yaw) * local_x + std::cos(robot_yaw) * local_y;
     estimate->range = horizontal_range;
-    estimate->stamp = ros::Time::now();
+    estimate->stamp = competition_mode_ ? observation.header.stamp : ros::Time::now();
+    if (competition_mode_) {
+      const auto camera = maze_planner::Point2(robot_x, robot_y) +
+                          maze_planner::rotate({camera_x_, camera_y_}, robot_yaw);
+      const double angle = robot_yaw + bearing;
+      estimate->outward = {-std::cos(angle), -std::sin(angle)};
+      localizeFinishWall(camera, angle, horizontal_range, estimate);
+    }
     return true;
   }
 
@@ -661,7 +720,7 @@ class BlueGoalNavigator {
     const ros::Time cutoff = ros::Time::now() - ros::Duration(target_sample_max_age_);
     while (!estimates_.empty() &&
            (estimates_.front().stamp < cutoff ||
-            static_cast<int>(estimates_.size()) > target_sample_count_ * 3)) {
+            static_cast<int>(estimates_.size()) > target_sample_count_ * (competition_mode_ ? 1 : 3))) {
       estimates_.pop_front();
     }
   }
@@ -672,10 +731,14 @@ class BlueGoalNavigator {
     double mean_x = 0.0;
     double mean_y = 0.0;
     double mean_range = 0.0;
+    maze_planner::Point2 normal;
+    int wall_samples = 0;
     for (const TargetEstimate& value : estimates_) {
       mean_x += value.x;
       mean_y += value.y;
       mean_range += value.range;
+      normal = normal + value.outward;
+      wall_samples += value.wall_valid;
     }
     const double count = static_cast<double>(estimates_.size());
     mean_x /= count;
@@ -692,6 +755,10 @@ class BlueGoalNavigator {
     result->x = mean_x;
     result->y = mean_y;
     result->range = mean_range;
+    const double normal_length = maze_planner::norm(normal);
+    if (competition_mode_ && normal_length < .75 * count) return false;
+    result->wall_valid = wall_samples >= (target_sample_count_ + 1) / 2;
+    if (normal_length > 1e-6) result->outward = (1.0 / normal_length) * normal;
     result->stamp = ros::Time::now();
     return true;
   }
@@ -806,6 +873,34 @@ class BlueGoalNavigator {
     goal_sent_time_ = ros::Time::now();
   }
 
+  std::vector<maze_planner::Point2> liveObstaclesInMap(double robot_x, double robot_y,
+                                                       double robot_yaw) {
+    std::vector<maze_planner::Point2> result;
+    if (!have_scan_ || (ros::Time::now() - last_scan_time_).toSec() > 0.5) return result;
+    geometry_msgs::TransformStamped laser_to_base;
+    try {
+      laser_to_base = tf_buffer_.lookupTransform(base_frame_, latest_scan_.header.frame_id,
+                                                 ros::Time(0), ros::Duration(0.05));
+    } catch (const std::exception&) {
+      return result;
+    }
+    const double laser_yaw = yawFromQuaternion(laser_to_base.transform.rotation);
+    const double lx = laser_to_base.transform.translation.x;
+    const double ly = laser_to_base.transform.translation.y;
+    result.reserve(latest_scan_.ranges.size() / 2);
+    for (std::size_t i = 0; i < latest_scan_.ranges.size(); i += 2) {
+      const double range = latest_scan_.ranges[i];
+      if (!std::isfinite(range) || range <= latest_scan_.range_min ||
+          range >= latest_scan_.range_max || range > 5.0) continue;
+      const double angle = laser_yaw + latest_scan_.angle_min + i * latest_scan_.angle_increment;
+      const maze_planner::Point2 base_pt(lx + range * std::cos(angle),
+                                         ly + range * std::sin(angle));
+      result.push_back(maze_planner::Point2(robot_x, robot_y) +
+                       maze_planner::rotate(base_pt, robot_yaw));
+    }
+    return result;
+  }
+
   void sendNextSearchGoal() {
     setParkingTolerance(false);
     double robot_x = 0.0;
@@ -827,7 +922,13 @@ class BlueGoalNavigator {
       if (search_index_ >= search_waypoints_.size()) search_index_ = 0;
       target = search_waypoints_[search_index_++];
     }
-    const double yaw = std::atan2(target.y - robot_y, target.x - robot_x);
+    double yaw = std::atan2(target.y - robot_y, target.x - robot_x);
+    if (current_goal_is_course_ && course_index_ + 1 < course_waypoints_.size()) {
+      const Point2D& next_wp = course_waypoints_[course_index_ + 1];
+      if (std::hypot(next_wp.x - target.x, next_wp.y - target.y) > 0.10) {
+        yaw = std::atan2(next_wp.y - target.y, next_wp.x - target.x);
+      }
+    }
     sendMoveBaseGoal(target.x, target.y, yaw, GoalKind::SEARCH);
     setState(State::SEARCH, current_goal_is_course_ ?
         "following mapped course toward the finish area" :
@@ -972,37 +1073,299 @@ class BlueGoalNavigator {
   }
 
   bool shouldHoldAtCourseEnd() const {
-    return hold_at_course_end_ && !course_waypoints_.empty() &&
+    if (!hold_at_course_end_) return false;
+    return !course_waypoints_.empty() &&
            course_index_ >= course_waypoints_.size();
   }
 
-  void finishObservationCb(const geometry_msgs::PoseStamped::ConstPtr& message) {
-    const double age = (ros::Time::now() - message->header.stamp).toSec();
-    if (!enabled_ || state_ != State::OBSERVE || !shouldHoldAtCourseEnd() ||
-        goal_active_ || finish_observation_attempted_ || message->header.frame_id != base_frame_ ||
-        message->header.stamp.isZero() || age < 0.0 || age > .5) return;
+  void costmapCb(const nav_msgs::OccupancyGrid::ConstPtr& msg) {
+    if (msg->header.frame_id != map_frame_ || !maze_planner::CorridorGrid(*msg).valid()) return;
+    costmap_ = msg;
+    costmap_received_ = ros::Time::now();
+  }
 
-    std::string reason;
-    if (!systemReady(&reason)) return;
-    double x = 0.0, y = 0.0, yaw = 0.0;
+  void terminalCb(const std_msgs::Bool::ConstPtr& msg) {
+    if (terminal_active_ == msg->data) return;
+    terminal_active_ = msg->data;
+    if (terminal_active_ && goal_active_) move_base_.cancelGoal();
+    if (!terminal_active_ && enabled_ && state_ == State::APPROACH)
+      rejected_entrances_.emplace_back(current_approach_goal_.x, current_approach_goal_.y);
+    goal_active_ = false;
+    goal_kind_ = GoalKind::NONE;
+    arrival_time_ = ros::Time();
+    last_search_check_ = ros::Time();
+  }
+
+  maze_planner::CorridorGrid activeGrid(const maze_planner::Point2& robot, double yaw) {
+    if (costmap_ && (ros::Time::now() - costmap_received_).toSec() <= 1.0)
+      return maze_planner::CorridorGrid(*costmap_);
+    maze_planner::CorridorGrid grid(map_);
+    if (!grid.valid()) return grid;
+    for (auto& value : grid.cost)
+      if (value > 0) value = value >= 50 ? 100 : -1;
+    for (const auto& point : liveObstaclesInMap(robot.x, robot.y, yaw)) {
+      const int i = grid.cell(point);
+      if (i >= 0) grid.cost[i] = 100;
+    }
+    return grid;
+  }
+
+  void publishObservationTurn(double angular) {
+    geometry_msgs::Twist cmd;
+    cmd.angular.z = angular;
+    observe_cmd_pub_.publish(cmd);
+  }
+
+  bool nextFrontier(const maze_planner::CorridorGrid& grid, const maze_planner::Point2& robot,
+                    const maze_planner::Point2* advance_past = nullptr) {
+    maze_planner::Point2 point;
+    double yaw = 0.0;
+    if (!explorer_.select(grid, robot, &point, &yaw, advance_past, &footprint_))
+      return false;
+    const double wall_yaw = maze_planner::detail::refineHeadingTowardWall(
+        map_, maze_planner::detail::gridOriginYaw(map_), point.x, point.y, yaw, 1.2);
+    const double correction = yawDifference(yaw, wall_yaw);
+    yaw += clampValue(correction, -.35, .35);
+    if (!grid.footprintClear(point, yaw, footprint_)) {
+      yaw -= clampValue(correction, -.35, .35);
+      if (!grid.footprintClear(point, yaw, footprint_)) return false;
+    }
+    if (state_ == State::OBSERVE) publishObservationTurn(0.0);
+    frontier_ = point;
+    advance_checked_ = false;
+    sendMoveBaseGoal(point.x, point.y, yaw, GoalKind::SEARCH);
+    setState(State::SEARCH, "exploring reachable corridor");
+    return true;
+  }
+
+  void beginObserve(double yaw, const ros::Time& now) {
+    if (goal_active_) move_base_.cancelGoal();
+    goal_active_ = false;
+    goal_kind_ = GoalKind::NONE;
+    observe_since_ = now;
+    observe_heading_ = yaw;
+    observe_direction_ = 1;
+    publishObservationTurn(0.0);
+    setState(State::OBSERVE, "holding base for gimbal sweep");
+  }
+
+  void runCompetition() {
+    double x = 0, y = 0, yaw = 0;
     if (!robotPose(&x, &y, &yaw)) return;
-    const maze_planner::Point2 relative(message->pose.position.x, message->pose.position.y);
-    const auto goal = maze_planner::Point2(x, y) + maze_planner::rotate(relative, yaw);
-    const double heading = yaw + yawFromQuaternion(message->pose.orientation);
-    if (!std::isfinite(goal.x) || !std::isfinite(goal.y) || !std::isfinite(heading)) return;
+    const maze_planner::Point2 robot(x, y);
+    const ros::Time now = ros::Time::now();
+    if (!explorer_started_) {
+      explorer_.reset(std::isfinite(origin_start_.x) && std::isfinite(origin_start_.y)
+                          ? origin_start_ : robot);
+      explorer_started_ = true;
+    }
+    if (pending_observation_) {
+      const auto frame = pending_observation_;
+      pending_observation_.reset();
+      TargetEstimate estimate;
+      if (estimateTarget(*frame, &estimate)) addEstimate(estimate);
+    }
+    if (terminal_active_) return;
+    explorer_.track(robot);
 
-    const maze_planner::Point2 toward_wall(std::cos(heading), std::sin(heading));
-    const double extra_standoffs[] = {0.0, .10, .20, .30, .40};
-    for (double extra : extra_standoffs) {
-      const auto candidate = goal - extra * toward_wall;
-      if (std::hypot(candidate.x-x, candidate.y-y) < .20 ||
-          !pointHasClearance(candidate.x, candidate.y, approach_clearance_)) continue;
-      finish_observation_attempted_ = true;
-      sendMoveBaseGoal(candidate.x, candidate.y, heading, GoalKind::SEARCH);
-      setState(State::OBSERVE, "navigating to a closer finish observation pose");
+    TargetEstimate stable;
+    double spread = 0.0;
+    if (now >= target_reacquire_after_ && stableTarget(&stable, &spread)) {
+      if (!target_locked_ || maze_planner::norm(
+          maze_planner::Point2(stable.x - locked_target_.x, stable.y - locked_target_.y)) > .55)
+        rejected_entrances_.clear();
+      if (!target_locked_ || stable.wall_valid || !locked_target_.wall_valid)
+        locked_target_ = stable;
+      target_locked_ = true;
+    }
+
+    const bool scan_fresh = have_scan_ && (now - last_scan_time_).toSec() <= .5;
+    if (!scan_fresh) {
+      if (goal_active_) move_base_.cancelGoal();
+      goal_active_ = false;
+      goal_kind_ = GoalKind::NONE;
+      setState(State::WAIT_SYSTEM, "waiting for fresh lidar");
       return;
     }
-    ROS_WARN_THROTTLE(3.0, "No aligned finish observation pose has enough map clearance");
+
+    if (target_locked_) {
+      const auto grid = activeGrid(robot, yaw);
+      if (runEntrance(grid, now)) return;
+    }
+
+    if (!last_search_check_.isZero() && (now - last_search_check_).toSec() < .5) return;
+    last_search_check_ = now;
+    const auto grid = activeGrid(robot, yaw);
+    if (goal_active_ && goal_kind_ == GoalKind::SEARCH) {
+      const auto action = move_base_.getState();
+      const bool reached = action == actionlib::SimpleClientGoalState::SUCCEEDED;
+      const bool blocked = !grid.clear(frontier_, .30, 95);
+      const bool timeout = (now - goal_sent_time_).toSec() > search_goal_timeout_;
+      if (blocked || (action.isDone() && !reached) || timeout) {
+        if (!blocked) explorer_.visit(frontier_);
+        if (nextFrontier(grid, robot)) return;
+        beginObserve(yaw, now);
+      } else if (reached || maze_planner::norm(robot - frontier_) <= .60) {
+        if (!advance_checked_) {
+          advance_checked_ = true;
+          const auto previous = frontier_;
+          const bool advanced = nextFrontier(grid, robot, &previous);
+          explorer_.visit(previous);
+          if (advanced) return;
+        }
+        if (reached) beginObserve(yaw, now);
+      }
+      return;
+    }
+    if (state_ != State::OBSERVE) {
+      if (!nextFrontier(grid, robot)) beginObserve(yaw, now);
+      return;
+    }
+    if ((now - observe_since_).toSec() < waypoint_observation_time_) return;
+    if (nextFrontier(grid, robot)) return;
+
+    const double offset = yawDifference(observe_heading_, yaw);
+    if (observe_direction_ * offset >= M_PI / 4 - .17) observe_direction_ *= -1;
+    const double turn = .28 * observe_direction_;
+    // Check the complete next command interval, including the angled footprint.
+    bool clear = true;
+    for (double dt : {.15, .30, .45, .60})
+      clear &= grid.footprintClear(robot, yaw + dt * turn, footprint_);
+    publishObservationTurn(clear ? turn : 0.0);
+  }
+
+  bool runEntrance(const maze_planner::CorridorGrid& grid, const ros::Time& now) {
+    const maze_planner::WallObservation wall{
+        {locked_target_.x, locked_target_.y}, locked_target_.outward};
+    const maze_planner::Point2 current(current_approach_goal_.x, current_approach_goal_.y);
+    const bool active = goal_active_ && goal_kind_ == GoalKind::APPROACH;
+    const bool occupied = active && !grid.footprintClear(current, current_approach_yaw_, footprint_);
+    if (active && !occupied) {
+      const auto action = move_base_.getState();
+      if (action == actionlib::SimpleClientGoalState::SUCCEEDED) {
+        if (arrival_time_.isZero()) {
+          arrival_time_ = now;
+          setState(State::APPROACH, "entrance reached; verifying terminal corridor");
+        }
+        if ((now - arrival_time_).toSec() < 2.6) return true;
+        rejected_entrances_.push_back(current);
+        goal_active_ = false;
+      } else if (action.isDone() || (now - goal_sent_time_).toSec() > search_goal_timeout_) {
+        if (!action.isDone()) move_base_.cancelGoal();
+        rejected_entrances_.push_back(current);
+        goal_active_ = false;
+      }
+    }
+
+    maze_planner::Point2 entrance;
+    if (maze_planner::selectFinishEntrance(grid, wall, footprint_, rejected_entrances_, &entrance)) {
+      entrance_unavailable_since_ = ros::Time();
+      const double yaw = maze_planner::parkingYaw(wall);
+      if (active && goal_active_ && !occupied &&
+          ((now - last_approach_update_).toSec() < goal_update_period_ ||
+           (maze_planner::norm(entrance - current) < goal_update_distance_ &&
+            std::fabs(yawDifference(current_approach_yaw_, yaw)) < M_PI / 30)))
+        return true;
+
+      if (state_ == State::OBSERVE) publishObservationTurn(0.0);
+      arrival_time_ = ros::Time();
+      current_approach_goal_ = {entrance.x, entrance.y};
+      current_approach_yaw_ = yaw;
+      last_approach_update_ = now;
+      sendMoveBaseGoal(entrance.x, entrance.y, yaw, GoalKind::APPROACH);
+      geometry_msgs::PoseStamped pose;
+      pose.header.stamp = now;
+      pose.header.frame_id = map_frame_;
+      pose.pose.position.x = entrance.x;
+      pose.pose.position.y = entrance.y;
+      pose.pose.orientation = quaternionFromYaw(yaw);
+      approach_goal_pub_.publish(pose);
+      setState(State::APPROACH, "navigating to blue-marker entrance");
+      return true;
+    }
+    if (active && goal_active_) {
+      if (!occupied) return true;
+      move_base_.cancelGoal();
+      goal_active_ = false;
+      goal_kind_ = GoalKind::NONE;
+    }
+    if (entrance_unavailable_since_.isZero()) entrance_unavailable_since_ = now;
+    // A blocked terminal can remain visible. Resume exploration once all
+    // entrance candidates have failed so the robot can view it from elsewhere.
+    if ((now - entrance_unavailable_since_).toSec() >= target_lost_timeout_) {
+      if (state_ == State::APPROACH) explorer_.visit(current);
+      target_locked_ = false;
+      entrance_unavailable_since_ = ros::Time();
+      target_reacquire_after_ = now + ros::Duration(2.0);
+      rejected_entrances_.clear();
+      estimates_.clear();
+      if (state_ == State::APPROACH) setState(State::SEARCH, "entrance unavailable; exploring again");
+    }
+    return false;
+  }
+
+  void localizeFinishWall(const maze_planner::Point2& camera, double bearing,
+                          double range, TargetEstimate* estimate) {
+    const double map_yaw = maze_planner::detail::gridOriginYaw(map_);
+    double static_range = 0.0;
+    maze_planner::Point2 hit;
+    const bool static_hit = maze_planner::detail::raycastOccupiedWall(
+        map_, map_yaw, camera.x, camera.y, bearing, max_target_range_, &static_range, &hit);
+    const bool static_matches = static_hit && std::abs(static_range - range) <= .45 * range;
+
+    std::vector<maze_planner::Point2> points;
+    if (have_scan_ && std::abs((estimate->stamp - latest_scan_.header.stamp).toSec()) <= .25) {
+      try {
+        const auto transform = tf_buffer_.lookupTransform(
+            map_frame_, latest_scan_.header.frame_id, latest_scan_.header.stamp);
+        const auto& origin = transform.transform.translation;
+        const double yaw = yawFromQuaternion(transform.transform.rotation);
+        for (std::size_t i = 0; i < latest_scan_.ranges.size(); ++i) {
+          const double r = latest_scan_.ranges[i];
+          if (!std::isfinite(r) || r <= latest_scan_.range_min ||
+              r >= latest_scan_.range_max || r > max_target_range_) continue;
+          const double a = yaw + latest_scan_.angle_min + i * latest_scan_.angle_increment;
+          points.emplace_back(origin.x + r * std::cos(a), origin.y + r * std::sin(a));
+        }
+      } catch (const tf2::TransformException&) {
+        // A synchronized scan may be unavailable while AMCL warms up.
+      }
+    }
+    maze_planner::WallObservation wall;
+    const double expected = static_matches ? static_range : range;
+    const double tolerance = static_matches ? .23 : std::max(.25, .30 * range);
+    if (maze_planner::fitTargetWall(points, camera, bearing, &wall,
+                                    max_target_range_, expected, tolerance)) {
+      hit = wall.marker;
+      estimate->outward = wall.outward;
+      estimate->wall_valid = true;
+    } else if (static_matches) {
+      // Fit a local patch around the ray hit so a neighboring side wall
+      // cannot dominate the normal at a corner.
+      std::vector<maze_planner::Point2> hits;
+      for (int i = -24; i <= 24; ++i) {
+        const double a = bearing + std::atan2(i * .018, static_range);
+        double distance;
+        maze_planner::Point2 side;
+        if (maze_planner::detail::raycastOccupiedWall(
+                map_, map_yaw, camera.x, camera.y, a, max_target_range_, &distance, &side) &&
+            maze_planner::norm(side - hit) < .65)
+          hits.push_back(side);
+      }
+      if (maze_planner::fitTargetWall(hits, camera, bearing, &wall,
+                                      max_target_range_, static_range, .15)) {
+        estimate->outward = wall.outward;
+      } else {
+        const double normal_yaw = maze_planner::detail::refineHeadingTowardWall(
+            map_, map_yaw, camera.x, camera.y, bearing, max_target_range_);
+        estimate->outward = {-std::cos(normal_yaw), -std::sin(normal_yaw)};
+      }
+      estimate->wall_valid = true;
+    } else {
+      return;
+    }
+    estimate->x = hit.x;
+    estimate->y = hit.y;
   }
 
   void handleSearchState() {
@@ -1011,13 +1374,25 @@ class BlueGoalNavigator {
       sendNextSearchGoal();
       return;
     }
+    if (current_goal_is_course_ &&
+        waypoint_pass_radius_ > 0.0 &&
+        course_index_ + 1 < course_waypoints_.size()) {
+      double rx = 0.0, ry = 0.0, ryaw = 0.0;
+      if (robotPose(&rx, &ry, &ryaw) &&
+          std::hypot(rx - course_waypoints_[course_index_].x,
+                     ry - course_waypoints_[course_index_].y) <= waypoint_pass_radius_) {
+        ++course_index_;
+        sendNextSearchGoal();
+        return;
+      }
+    }
     const actionlib::SimpleClientGoalState action_state = move_base_.getState();
     const bool timeout = (ros::Time::now() - goal_sent_time_).toSec() > search_goal_timeout_;
     if (action_state.isDone() || timeout) {
       if (timeout) move_base_.cancelGoal();
-      const bool was_course_goal = current_goal_is_course_;
       goal_active_ = false;
       goal_kind_ = GoalKind::NONE;
+      const bool was_course_goal = current_goal_is_course_;
       if (was_course_goal) ++course_index_;
       if (!timeout && action_state == actionlib::SimpleClientGoalState::SUCCEEDED) {
         if (was_course_goal && course_index_ < course_waypoints_.size()) {
@@ -1038,21 +1413,7 @@ class BlueGoalNavigator {
 
   void handleObserveState() {
     if (target_visible_) return;
-    // The final recorded point is in the finish area. Keep scanning there;
-    // generic free-space waypoints can lead back through the course.
-    if (shouldHoldAtCourseEnd()) {
-      if (!goal_active_) return;
-      const auto action_state = move_base_.getState();
-      const bool timeout = (ros::Time::now() - goal_sent_time_).toSec() > search_goal_timeout_;
-      if (!action_state.isDone() && !timeout) return;
-      if (timeout) move_base_.cancelGoal();
-      goal_active_ = false;
-      goal_kind_ = GoalKind::NONE;
-      setState(State::OBSERVE, !timeout && action_state == actionlib::SimpleClientGoalState::SUCCEEDED ?
-          "closer observation pose reached; scanning for blue marker" :
-          "closer observation pose unreachable; waiting for blue marker");
-      return;
-    }
+    if (shouldHoldAtCourseEnd()) return;
     const bool line_fresh = black_line_visible_ &&
         (ros::Time::now() - last_black_line_time_).toSec() <= black_line_timeout_;
     if (line_guidance_enabled_ && line_fresh &&
@@ -1202,6 +1563,10 @@ class BlueGoalNavigator {
       return;
     }
 
+    if (competition_mode_) {
+      runCompetition();
+      return;
+    }
     if (state_ == State::WAIT_SYSTEM) {
       if (target_visible_ && target_pose_valid_) {
         setState(State::ACQUIRE, "blue target already visible");
@@ -1243,13 +1608,29 @@ class BlueGoalNavigator {
   ros::Subscriber gimbal_ready_sub_;
   ros::Subscriber gimbal_locked_sub_;
   ros::Subscriber enable_sub_;
-  ros::Subscriber finish_observation_sub_;
+  ros::Subscriber terminal_sub_;
+  ros::Subscriber costmap_sub_;
+  ros::Publisher observe_cmd_pub_;
   ros::Publisher state_pub_;
   ros::Publisher target_pose_pub_;
   ros::Publisher approach_goal_pub_;
   ros::Publisher goal_reached_pub_;
   ros::ServiceClient tolerance_client_;
   ros::Timer timer_;
+
+  bool competition_mode_{false}, explorer_started_{false}, target_locked_{false};
+  nav_msgs::OccupancyGrid::ConstPtr costmap_;
+  ros::Time costmap_received_, last_search_check_, entrance_unavailable_since_;
+  ros::Time observe_since_, arrival_time_, target_reacquire_after_;
+  maze_planner::CorridorExplorer explorer_;
+  maze_planner::Point2 origin_start_, frontier_;
+  std::vector<maze_planner::Point2> rejected_entrances_;
+  maze_planner::GimbalHistory gimbal_history_;
+  stm32_bridge::BlueTargetObservation::ConstPtr pending_observation_;
+  TargetEstimate locked_target_;
+  bool terminal_active_{false}, advance_checked_{false};
+  double observe_heading_{0.0};
+  int observe_direction_{1};
 
   bool auto_start_{false};
   double start_delay_{5.0};
@@ -1282,6 +1663,7 @@ class BlueGoalNavigator {
   bool prefer_forward_search_{false};
   bool acquire_target_in_navigation_{true};
   bool hold_at_course_end_{false};
+  double waypoint_pass_radius_{0.0};
   double waypoint_observation_time_{3.0};
   double line_scan_hold_time_{10.0};
   double line_retrigger_cooldown_{12.0};
@@ -1338,7 +1720,6 @@ class BlueGoalNavigator {
   std::vector<Point2D> search_waypoints_;
   std::vector<Point2D> course_waypoints_;
   std::size_t course_index_{0};
-  bool finish_observation_attempted_{false};
   bool current_goal_is_course_{false};
   std::size_t search_index_{0};
   Point2D current_approach_goal_;

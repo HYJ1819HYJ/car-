@@ -11,7 +11,6 @@ map_file="${COMPETITION_MAP_FILE:-$project_dir/maps/20261125/new_field/map.yaml}
 map_file="$(realpath -m -- "$map_file")"
 map_dir="$(dirname -- "$map_file")"
 pose_file="${COMPETITION_START_POSE:-$map_dir/start_pose.json}"
-course_file="${COMPETITION_COURSE_FILE:-$map_dir/course_waypoints.yaml}"
 camera_device="${ROBOT_CAMERA_DEVICE:-/dev/v4l/by-id/usb-HRY_USB_Camera_20191109-video-index0}"
 mode="${1:-start}"
 
@@ -26,7 +25,7 @@ usage() {
 启动后沿建图路线导航；识别蓝纸且雷达通道满足条件后切换到视觉追踪。
 前向急停 12 cm；蓝纸轮廓占比达到 16% 且朝向误差不超过 5° 时停车。
 在运行终端按 Ctrl+C，或另开终端执行 --stop，可停止任务。
-换地图时，可设置 COMPETITION_MAP_FILE、COMPETITION_START_POSE 和 COMPETITION_COURSE_FILE。
+换地图时，可设置 COMPETITION_MAP_FILE 和 COMPETITION_START_POSE。
 EOF
 }
 
@@ -110,14 +109,11 @@ done
 [[ "$(stat -Lc '%t:%T' "$base_device")" != "$(stat -Lc '%t:%T' "$gimbal_device")" ]] || {
   printf '底盘与云台指向同一串口，请检查连接。\n' >&2; exit 1;
 }
-[[ -f "$map_file" && -f "$pose_file" && -f "$course_file" ]] || { printf '地图、起点或路线文件不存在：%s / %s / %s\n' "$map_file" "$pose_file" "$course_file" >&2; exit 1; }
+[[ -f "$map_file" && -f "$pose_file" ]] || { printf '地图或起点文件不存在：%s / %s\n' "$map_file" "$pose_file" >&2; exit 1; }
 map_file="$(realpath "$map_file")"
 pose_file="$(realpath "$pose_file")"
-course_file="$(realpath "$course_file")"
 [[ "$map_file" == "$project_dir/"* ]] || { printf '地图需位于工作区内，供 ROS1 容器读取。\n' >&2; exit 1; }
-[[ "$course_file" == "$project_dir/"* ]] || { printf '路线需位于工作区内，供 ROS1 容器读取。\n' >&2; exit 1; }
 container_map="/workspace/xiaoche/${map_file#"$project_dir/"}"
-container_course="/workspace/xiaoche/${course_file#"$project_dir/"}"
 pose_values="$(python3 - "$pose_file" <<'PY'
 import json, math, sys
 with open(sys.argv[1]) as stream:
@@ -129,21 +125,6 @@ print(*values)
 PY
 )"
 read -r start_x start_y start_yaw <<< "$pose_values"
-course_count="$(python3 - "$course_file" <<'PY'
-import math, sys, yaml
-with open(sys.argv[1]) as stream:
-    data = yaml.safe_load(stream)
-points = data.get('course_waypoints') if isinstance(data, dict) else None
-if not isinstance(points, list) or not points:
-    raise SystemExit('路线必须包含至少一个 course_waypoints 途经点')
-for point in points:
-    if (not isinstance(point, list) or len(point) != 2 or
-            any(isinstance(v, bool) or not isinstance(v, (int, float)) or
-                not math.isfinite(v) for v in point)):
-        raise SystemExit('路线途经点必须是有限数值组成的 [x, y]')
-print(len(points))
-PY
-)"
 
 device_mapping_matches() {
   container_running || return 1
@@ -154,7 +135,7 @@ device_mapping_matches() {
 }
 
 if [[ "$mode" == --check ]]; then
-  printf '地图：%s\n起点：%s（%s）\n路线：%s（%s 个途经点）\n底盘：%s；云台：%s；摄像头：%s\n' "$map_file" "$pose_file" "$pose_values" "$course_file" "$course_count" "$base_device" "$gimbal_device" "$camera_device"
+  printf '地图：%s\n起点：%s（%s）\n底盘：%s；云台：%s；摄像头：%s\n' "$map_file" "$pose_file" "$pose_values" "$base_device" "$gimbal_device" "$camera_device"
   if device_mapping_matches; then printf 'ROS1 容器设备映射：匹配。\n'; else printf 'ROS1 容器设备映射将在启动时更新。\n'; fi
   if [[ -r /sys/class/net/enp0s31f6/carrier ]]; then printf '雷达网口链路：%s\n' "$(cat /sys/class/net/enp0s31f6/carrier)"; fi
   exit 0
@@ -196,17 +177,22 @@ rm -f "$runtime_dir/launch.pid" "$runtime_dir/viewer.pid"
 run_tag="$(date +%Y%m%d-%H%M%S)"
 launch_log="$runtime_dir/launch-$run_tag.log"
 viewer_log="$runtime_dir/viewer-$run_tag.log"
-printf '启动自主任务：小车沿建图路线导航，云台搜索，终点由蓝纸识别。\n'
+printf '启动自主任务：小车根据实时地图探索，终点由蓝纸识别。\n'
 printf '地图：%s\n日志：%s\n停止：Ctrl+C 或本脚本 --stop\n' "$map_file" "$launch_log"
+
+max_speed="${COMPETITION_MAX_SPEED:-1.00}"
+max_turn="${COMPETITION_MAX_TURN:-1.00}"
+visual_max_speed="${COMPETITION_VISUAL_MAX_SPEED:-0.30}"
+visual_max_turn="${COMPETITION_VISUAL_MAX_TURN:-0.50}"
 
 ros1 bash -c '
   printf "%s\n" "$$" > /workspace/xiaoche/outputs/competition-run/launch.pid
   exec roslaunch -p 11311 maze_bridge navigation_visual_handoff.launch \
     map_file:="$1" initial_pose_x:="$2" initial_pose_y:="$3" initial_pose_a:="$4" \
-    course_waypoints_file:="$5" \
+    max_speed:="$5" max_turn:="$6" visual_max_speed:="$7" visual_max_turn:="$8" \
     auto_start:=true show_rviz:=false base_port:=/dev/ttyUSB0 \
     gimbal_port:=/dev/ttyUSB1 camera_device:=/dev/video4
-' _ "$container_map" "$start_x" "$start_y" "$start_yaw" "$container_course" >"$launch_log" 2>&1 9>&- &
+' _ "$container_map" "$start_x" "$start_y" "$start_yaw" "$max_speed" "$max_turn" "$visual_max_speed" "$visual_max_turn" >"$launch_log" 2>&1 9>&- &
 launch_wrapper=$!
 
 cleanup() {

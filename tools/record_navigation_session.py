@@ -50,6 +50,15 @@ topics=['/map','/corner_clearance_map','/map_metadata','/scan','/scan_obstacles'
 topics.extend(['/move_base/SmoothGlobalPlanner/plan',
                '/move_base/SmoothGlobalPlanner/raw_plan',
                '/move_base/SmoothGlobalPlanner/diagnostics'])
+topics.extend([
+    '/blue_autonomy/enable', '/blue_autonomy/state',
+    '/handoff/nav_state', '/handoff/visual_state',
+    '/handoff/cmd_vel_nav', '/handoff/cmd_vel_visual',
+    '/handoff/nav_enable', '/handoff/visual_enable',
+    '/blue_target/map_pose', '/blue_target/approach_goal',
+    '/gimbal/connected', '/gimbal/servo_ready', '/gimbal/searching',
+    '/gimbal/target_locked', '/gimbal/status_text', '/gimbal/joint_states',
+])
 metadata['recorded_topics']=topics
 (folder/'start_snapshot.json').write_text(json.dumps(metadata,ensure_ascii=False,indent=2)+'\n')
 log=(folder/'rosbag_record.log').open('w')
@@ -57,7 +66,7 @@ record=subprocess.Popen(['rosbag','record','--lz4','--split','--duration=300','-
 (folder/'recorder.pid').write_text(str(record.pid)+'\n')
 start=time.monotonic();ready=False
 try:
-    while not stop and time.monotonic()-start<a.minutes*60:
+    while not stop and (a.minutes == 0 or time.monotonic() - start < a.minutes * 60):
         if record.poll() is not None:raise RuntimeError('rosbag exited with status '+str(record.returncode))
         active=list(folder.glob('*.bag.active'))
         ready=ready or bool(active)

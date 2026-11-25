@@ -63,6 +63,63 @@ TEST(DirectReactive, SearchesWhenTheTargetIsAbsent) {
   EXPECT_LT(command.w, 0.0);
 }
 
+TEST(DirectReactive, SteersTowardWallNormalCenterlineAndTapersSpeedNearStop) {
+  maze_planner::ReactiveParameters p;
+  p.max_speed = 0.30;
+  p.min_approach_speed = 0.10;
+  p.max_turn = 0.50;
+
+  // Marker is at x=2.0, y=-0.65 (right of robot), wall outward normal is (-1, 0).
+  // Direct bearing to marker is atan2(-0.65, 2.0) = -0.314 rad, whereas the lead
+  // point on the wall normal (1.20, -0.65) has bearing atan2(-0.65, 1.20) = -0.496 rad,
+  // steering more strongly onto the 0.8 m square's centerline before final approach.
+  auto far_offset = visible(std::atan2(-0.65, 2.0), 0.02);
+  far_offset.wall_valid = true;
+  far_offset.wall_marker = maze_planner::Point2(2.0, -0.65);
+  far_offset.wall_outward = maze_planner::Point2(-1.0, 0.0);
+  auto cmd_align = maze_planner::reactiveVisualCommand(far_offset, p, 0, -1);
+  EXPECT_LT(cmd_align.w, -0.40);
+
+  // Centered far away -> full boosted cruise speed (0.30 m/s).
+  auto far_centered = visible(0.0, 0.02);
+  far_centered.front_clearance = 1.80;
+  auto cmd_fast = maze_planner::reactiveVisualCommand(far_centered, p, 0, 1);
+  EXPECT_NEAR(cmd_fast.v, 0.30, 1e-6);
+
+  // Close to 16% stop threshold -> smoothly tapered toward 0.10 m/s soft landing.
+  auto near_stop = visible(0.0, 0.15);
+  near_stop.front_clearance = 0.24;
+  auto cmd_slow = maze_planner::reactiveVisualCommand(near_stop, p, 0, 1);
+  EXPECT_GT(cmd_slow.v, 0.09);
+  EXPECT_LT(cmd_slow.v, 0.15);
+}
+
+TEST(ParkingStop, RejectsLargeContourOutsideFinishAndStopsWithSmallContourInside) {
+  maze_planner::ReactiveParameters p;
+  auto input = visible(0.0, .35);
+  input.wall_valid = true;
+  input.wall_outward = {-1.0, 0.0};
+  input.wall_marker = {.85, 0.0};
+  EXPECT_FALSE(maze_planner::parkingStopReached(input, p));
+  EXPECT_GT(maze_planner::reactiveVisualCommand(input, p, 0, 1).v, 0.0);
+  input.wall_marker = {.55, 0.0};
+  input.contour_ratio = .09;
+  EXPECT_TRUE(maze_planner::parkingStopReached(input, p));
+  input.target_visible = false;
+  EXPECT_TRUE(maze_planner::reactiveVisualCommand(input, p, 0, 1).complete);
+}
+
+TEST(ParkingStop, ChecksRotatedFootprintBeforeAcceptingMetricFallback) {
+  maze_planner::ReactiveParameters p;
+  auto input = visible(.02, .30);
+  input.wall_valid = true;
+  input.wall_outward = maze_planner::rotate({-1.0, 0.0}, .13);
+  input.wall_marker = maze_planner::rotate({.55, .138}, .13);
+  EXPECT_FALSE(maze_planner::parkingStopReached(input, p));
+  input.wall_valid = false;
+  EXPECT_TRUE(maze_planner::parkingStopReached(input, p));
+}
+
 int main(int argc, char** argv) {
   testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();

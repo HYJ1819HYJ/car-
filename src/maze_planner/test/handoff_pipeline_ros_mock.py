@@ -1,181 +1,485 @@
 #!/usr/bin/env python3
-"""Run navigation, handoff and visual nodes with simulated ROS messages only."""
+"""Kinematic competition scenarios with real move_base, planners and handoff nodes.
+
+Run on an isolated Noetic ROS master on port 11329. The sensors, localization
+and drivetrain are simulated. Navigation consumes the production launch params.
+"""
+import argparse
+import errno
+import json
 import math
 import os
+from pathlib import Path
+import pty
+import signal
 import subprocess
+import tempfile
 import time
 
-import actionlib
+import cv2
+import numpy as np
+import roslaunch
 import rospy
 import tf2_ros
-from geometry_msgs.msg import TransformStamped, Twist
-from move_base_msgs.msg import MoveBaseAction
-from nav_msgs.msg import OccupancyGrid
+from geometry_msgs.msg import PoseWithCovarianceStamped, TransformStamped, Twist
+from move_base_msgs.msg import MoveBaseActionGoal
+from nav_msgs.msg import OccupancyGrid, Odometry
 from sensor_msgs.msg import JointState, LaserScan
 from std_msgs.msg import Bool, String
+from std_srvs.srv import Empty
 from stm32_bridge.msg import BlueTargetObservation
 
-if os.environ.get('ROS_MASTER_URI') != 'http://127.0.0.1:11329':
-    raise SystemExit('This mock only runs on isolated ROS master port 11329')
-rospy.init_node('handoff_pipeline_mock')
-hold_test = os.environ.get('COURSE_TEST_FINAL_HOLD') == '1'
-rospy.set_param('/robot_geometry/footprint', [[.3483,.245],[.3483,-.245],
-                                              [-.1517,-.245],[-.1517,.245]])
-for key, val in {'auto_start':False,'start_delay':0.0,'require_localization':False,
-                 'require_gimbal':True,'target_sample_count':3,'line_guidance_enabled':False,
-                 'acquire_target_in_navigation':False,
-                 'hold_at_course_end':hold_test,
-                 'course_waypoints':[[.8, 0.0], [1.5, -.4]],
-                 'approach_clearance':.37}.items():
-    rospy.set_param('/handoff_blue_navigator/'+key,val)
-rospy.set_param('/handoff_direct_visual/auto_start',False)
-rospy.set_param('/handoff_direct_visual/require_gimbal',True)
-rospy.set_param('/visual_handoff_manager/auto_start',True)
-rospy.set_param('/visual_handoff_manager/required_clear_scans',3)
-rospy.set_param('/visual_handoff_manager/finish_observation_distance',.90)
-goals, preempted, commands, states, nav_states, reached = [], [], [], [], [], []
 
-def execute(goal):
-    goals.append((time.monotonic(),goal))
-    first_goal = len(goals) == 1
-    started = time.monotonic()
-    while not rospy.is_shutdown():
-        if server.is_preempt_requested():
-            preempted.append(time.monotonic())
-            server.set_preempted()
-            return
-        if (first_goal or hold_test) and time.monotonic() - started > .4:
-            server.set_succeeded()
-            return
-        rospy.sleep(.04)
+MASTER = "http://127.0.0.1:11329"
+RANGES = np.linspace(-.75 * math.pi, .75 * math.pi, 1081)
+CAM_FOCAL = 640 / (2 * math.tan(math.radians(44)))
+WORKSPACE = Path(__file__).resolve().parents[3]
+START = (1.0, 0.0, 0.0)
 
-server=actionlib.SimpleActionServer('/move_base',MoveBaseAction,execute_cb=execute,auto_start=False)
-server.start()
-obs_pub=rospy.Publisher('/blue_target/observation',BlueTargetObservation,queue_size=2)
-scan_pub=rospy.Publisher('/scan',LaserScan,queue_size=2)
-joint_pub=rospy.Publisher('/gimbal/joint_states',JointState,queue_size=2)
-connected=rospy.Publisher('/gimbal/connected',Bool,queue_size=1,latch=True)
-ready=rospy.Publisher('/gimbal/servo_ready',Bool,queue_size=1,latch=True)
-locked=rospy.Publisher('/gimbal/target_locked',Bool,queue_size=1,latch=True)
-map_pub=rospy.Publisher('/map',OccupancyGrid,queue_size=1,latch=True)
-fake_nav=rospy.Publisher('/handoff/cmd_vel_nav',Twist,queue_size=2)
-rospy.Subscriber('/cmd_vel',Twist,lambda m: commands.append((time.monotonic(),m.linear.x,m.angular.z)),queue_size=40)
-rospy.Subscriber('/blue_autonomy/state',String,lambda m: states.append((time.monotonic(),m.data)),queue_size=20)
-rospy.Subscriber('/handoff/nav_state',String,lambda m: nav_states.append(m.data),queue_size=20)
-rospy.Subscriber('/goal_reached',Bool,lambda m: reached.append((time.monotonic(),m.data)),queue_size=10)
-connected.publish(True); ready.publish(True); locked.publish(True)
-grid=OccupancyGrid(); grid.header.frame_id='map'; grid.info.resolution=.025
-grid.info.width=160; grid.info.height=120; grid.info.origin.position.x=-1.0
-grid.info.origin.position.y=-1.5; grid.info.origin.orientation.w=1
-grid.data = []
-for i in range(grid.info.width*grid.info.height):
-    x = grid.info.origin.position.x + (i%160+.5)*.025
-    y = grid.info.origin.position.y + (i//160+.5)*.025
-    blocks_close_poses = hold_test and abs(x-1.3125)<.02 and abs(y-.45)<.05
-    grid.data.append(100 if x >= 2 or blocks_close_poses else 0)
-map_pub.publish(grid)
-tf_pub=tf2_ros.TransformBroadcaster()
-static=tf2_ros.StaticTransformBroadcaster()
-tf_laser=TransformStamped(); tf_laser.header.stamp=rospy.Time.now()
-tf_laser.header.frame_id='base_footprint'; tf_laser.child_frame_id='laser'
-tf_laser.transform.translation.x=.315; tf_laser.transform.rotation.w=1
-static.sendTransform(tf_laser)
-commands_to_run=[
- ['rosrun','maze_planner','blue_goal_navigator','__name:=handoff_blue_navigator',
-  '/blue_autonomy/enable:=/handoff/nav_enable','/blue_autonomy/state:=/handoff/nav_state',
-  '/goal_reached:=/handoff/nav_goal_reached'],
- ['rosrun','maze_planner','direct_visual_controller','__name:=handoff_direct_visual',
-  '/blue_autonomy/enable:=/handoff/visual_enable','/blue_autonomy/state:=/handoff/visual_state',
-  '/goal_reached:=/handoff/visual_goal_reached','/cmd_vel:=/handoff/cmd_vel_visual'],
- ['rosrun','maze_planner','visual_handoff_manager','__name:=visual_handoff_manager']]
-children=[subprocess.Popen(cmd) for cmd in commands_to_run]
 
-def phase(detected, obstacle=False, area=.02, duration=1.8, camera=True, marker_y=0.0):
-    start=time.monotonic(); rate=rospy.Rate(20)
-    while time.monotonic()-start < duration and not rospy.is_shutdown():
-        stamp=rospy.Time.now()
-        tf=TransformStamped(); tf.header.stamp=stamp; tf.header.frame_id='map'
-        tf.child_frame_id='base_footprint'; tf.transform.rotation.w=1; tf_pub.sendTransform(tf)
-        scan=LaserScan(); scan.header.stamp=stamp; scan.header.frame_id='laser'
-        scan.angle_min=-math.pi; scan.angle_increment=2*math.pi/1440
-        scan.angle_max=math.pi-scan.angle_increment; scan.range_min=.1; scan.range_max=10
-        scan.ranges=[6.0]*1440
-        for i in range(1440):
-            a=scan.angle_min+i*scan.angle_increment
-            if math.cos(a)>.2: scan.ranges[i]=(2-.315)/math.cos(a)
-        if obstacle:
-            a=math.atan2(.15,1-.315); beam=round((a-scan.angle_min)/scan.angle_increment)
-            for i in range(beam-4,beam+5): scan.ranges[i]=math.hypot(1-.315,.15)
-        scan_pub.publish(scan)
-        joint=JointState(); joint.header.stamp=stamp
-        joint.name=['camera_pan_joint','camera_tilt_joint']
-        joint.position=[math.atan2(marker_y,2-.145),0.]
-        joint_pub.publish(joint)
-        obs=BlueTargetObservation(); obs.header.stamp=stamp; obs.detected=detected
-        obs.image_width,obs.image_height=640,480; obs.center_x,obs.center_y=320,240
-        obs.pixel_height=640/(2*math.tan(math.radians(35)))*.297/math.hypot(2-.145,marker_y)
-        obs.pixel_width=.7*obs.pixel_height; obs.contour_ratio=area
-        if camera:
-            obs_pub.publish(obs)
-        nav=Twist(); nav.linear.x=.071; nav.angular.z=.11; fake_nav.publish(nav)
-        rate.sleep()
-    return start,time.monotonic()
+def yaw_of(quaternion):
+    return 2 * math.atan2(quaternion.z, quaternion.w)
 
-try:
-    if hold_test:
-        phase(False,duration=4.0)
-        assert any('mapped course end reached' in state for state in nav_states), \
-            'Navigator did not reach the final waypoint before camera interruption'
-        phase(False,duration=1.6,camera=False)
-        assert any('waiting for camera/blue detector' in state for state in nav_states), \
-            'The camera interruption did not put the navigator into WAIT_SYSTEM'
-        phase(False,duration=2.0)
-        assert len(goals) == 2, 'Navigator sent an unrelated goal after the mapped course'
-        assert 'mapped course end reached' in nav_states[-1], \
-            'Navigator did not resume waiting at the final waypoint after camera recovery'
-        phase(True, duration=3.0, marker_y=.45)
-    else:
-        search=phase(False,duration=2.3)
-        blocked=phase(True,obstacle=True,duration=2.1)
-        clear=phase(True,duration=2.4)
-        finish=phase(True,area=.16,duration=1.0)
-finally:
-    for child in children: child.terminate()
-    for child in children:
-        try: child.wait(timeout=4)
-        except subprocess.TimeoutExpired: child.kill(); child.wait()
 
-print('states:',[s for _,s in states])
-print('navigation goals:',len(goals),'cancellations:',len(preempted))
-print('goal reached:',reached)
-def interval_values(interval): return [(v,w) for t,v,w in commands if interval[0]+.4<t<interval[1]]
-assert goals, 'Navigator never began an autonomous search goal'
-assert len(goals) >= 2, 'Navigator did not advance along the mapped course'
-for (_, goal), expected in zip(goals[:2], ((.8, 0.0), (1.5, -.4))):
-    p = goal.target_pose.pose.position
-    assert abs(p.x - expected[0]) < 1e-6 and abs(p.y - expected[1]) < 1e-6, \
-        'Mapped course was not followed in order'
-if hold_test:
-    assert len(goals) == 3, 'Expected one closer observation goal after the mapped course'
-    finish_pose = goals[-1][1].target_pose.pose.position
-    assert abs(finish_pose.x - .90) < .05 and abs(finish_pose.y - .45) < .05, \
-        'Navigation did not pick the first aligned pose with enough map clearance'
-    assert 'closer observation pose reached' in nav_states[-1], \
-        'Navigator did not settle at the closer observation pose'
-    assert not any(s.startswith('VISUAL:') for _, s in states), \
-        'Visual tracking took control before aligning to the marker'
-    assert any('needs lateral alignment' in s for _, s in states), \
-        'The offset marker did not require lateral alignment'
-    print('PASS: waits through camera recovery and tries one closer observation with navigation')
-    rospy.signal_shutdown('course end mock complete')
-    raise SystemExit(0)
-assert not any(t < clear[0] for t in preempted), \
-    'Navigation was canceled by the camera while the corridor was blocked'
-assert preempted, 'Navigation goal was not canceled during handoff/search transition'
-assert not any(s.startswith('VISUAL:') and t<clear[0] for t,s in states), 'Switched with obstructed corridor'
-assert any(s.startswith('VISUAL:') and clear[0]<=t<clear[1] for t,s in states), 'No visual handoff after corridor cleared'
-assert any(abs(v-.1)<1e-6 for v,w in interval_values(clear)), 'Direct visual command was not forwarded'
-assert not any(abs(v-.071)<1e-6 for v,w in interval_values(finish)), 'Navigation command leaked after handoff'
-assert any(v and t>=finish[0] for t,v in reached), 'Visual stop did not latch the global goal'
-print('PASS: mapped course, obstacle-gated handoff, direct control, and final latch')
-rospy.signal_shutdown('handoff pipeline mock complete')
+def angle(yaw):
+    return math.atan2(math.sin(yaw), math.cos(yaw))
+
+
+def corners(rect):
+    x0, y0, x1, y1 = rect
+    return np.array([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], np.float32)
+
+
+class Field:
+    def __init__(self, name):
+        self.verify_dropout = name == "box"
+        self.camera_range = 5.48 if name == "box" else 7.5
+        if name == "branches":
+            self.floors = [(0, -1.15, 6.25, 1.15), (4.00, -3.35, 6.25, 4.30)]
+            self.walls = [(0, -1.15, 4.00, -1.15), (0, 1.15, 4.00, 1.15),
+                          (0, -1.15, 0, 1.15), (4.00, -3.35, 4.00, -1.15),
+                          (4.00, 1.15, 4.00, 4.30), (6.25, -3.35, 6.25, 4.30),
+                          (4.00, -3.35, 6.25, -3.35), (4.00, 4.30, 6.25, 4.30)]
+            self.attempts = [((5.125, -3.35), (0, 1), []),
+                             ((5.125, 4.30), (0, -1), [(1.95, -.70, 2.45, -.20)])]
+        else:
+            self.floors = [(0, -1.60, 7.0, 1.60)]
+            self.walls = [(0, -1.60, 7.0, -1.60), (0, 1.60, 7.0, 1.60),
+                          (0, -1.60, 0, 1.60), (7.0, -1.60, 7.0, 1.60)]
+            self.attempts = [((7., 0.), (-1, 0), [(5.35, -.25, 5.85, .25)])] if name == "box" else [
+                ((7., 1.18), (-1, 0), [])]
+
+    def occupancy(self):
+        grid = OccupancyGrid()
+        grid.header.frame_id = "map"
+        grid.header.stamp = rospy.Time.now()
+        res = .025
+        width, height = 328, 356
+        ox, oy = -.60, -4.0
+        grid.info.resolution, grid.info.width, grid.info.height = res, width, height
+        grid.info.origin.position.x, grid.info.origin.position.y = ox, oy
+        grid.info.origin.orientation.w = 1.0
+        x, y = np.meshgrid(ox + res * (np.arange(width) + .5),
+                           oy + res * (np.arange(height) + .5))
+        free = np.zeros(x.shape, dtype=bool)
+        for x0, y0, x1, y1 in self.floors:
+            free |= (x > x0) & (x < x1) & (y > y0) & (y < y1)
+        grid.data = np.where(free, 0, 100).flatten().astype(np.int8).tolist()
+        return grid
+
+    def cast(self, x, y, direction, extra=()):
+        dx, dy = np.cos(direction), np.sin(direction)
+        distance = np.full_like(direction, 12.0, dtype=float)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            for x0, y0, x1, y1 in self.walls + list(extra):
+                if x0 == x1:
+                    d = (x0 - x) / dx
+                    value = y + d * dy
+                    hit = (value >= y0) & (value <= y1)
+                else:
+                    d = (y0 - y) / dy
+                    value = x + d * dx
+                    hit = (value >= x0) & (value <= x1)
+                distance = np.where(hit & (d > 0), np.minimum(distance, d), distance)
+        return distance
+
+
+class RaceTerminal:
+    """Run the production key listener with a PTY and a real prewarmed rosbag."""
+
+    def __init__(self, field, attempt):
+        self.directory = field / f"attempt-{attempt:02}"
+        self.directory.mkdir()
+        self.master, slave = pty.openpty()
+        self.output = bytearray()
+        self.bag = None
+        os.set_blocking(self.master, False)
+        try:
+            self.child = subprocess.Popen(
+                ["python3", str(WORKSPACE / "tools/trigger_race_go.py"), str(field),
+                 str(self.directory)], stdin=slave, stdout=slave, stderr=slave,
+                start_new_session=True)
+        finally:
+            os.close(slave)
+
+    def read(self):
+        try:
+            while True:
+                chunk = os.read(self.master, 4096)
+                if not chunk:
+                    break
+                self.output.extend(chunk)
+        except BlockingIOError:
+            pass
+        except OSError as error:
+            if error.errno != errno.EIO:
+                raise
+        return self.output.decode(errors="replace")
+
+    def prepare(self):
+        if self.bag is None and (self.directory / ".start-recording").is_file():
+            self.bag = subprocess.Popen(
+                ["rosbag", "record", "--lz4", "-O", str(self.directory / "round.bag"),
+                 "/cmd_vel", "/blue_autonomy/state", "/goal_reached"], stdout=subprocess.DEVNULL)
+        return "[READY]" in self.read() and self.child.poll() is None
+
+    def trigger(self, key):
+        os.write(self.master, key)
+
+    def close(self):
+        if self.child.poll() is None:
+            self.child.send_signal(signal.SIGINT)
+        try:
+            result = self.child.wait(timeout=4)
+        finally:
+            if self.child.poll() is None:
+                self.child.kill()
+                self.child.wait()
+            if self.bag is not None and self.bag.poll() is None:
+                self.bag.send_signal(signal.SIGINT)
+                try:
+                    self.bag.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    self.bag.kill()
+                    self.bag.wait()
+            transcript = self.read()
+            os.close(self.master)
+            print(transcript, flush=True)
+        complete = self.directory / "round.bag"
+        assert result == 0 and complete.is_file() and not list(self.directory.glob("*.active")), transcript
+        assert "底盘目标速度归零" in transcript, transcript
+        subprocess.run(["rosbag", "info", str(complete)], check=True, stdout=subprocess.DEVNULL)
+
+
+class Simulation:
+    def __init__(self, field, workspace_config):
+        self.field = field
+        self.pose = START
+        self.command = (0.0, 0.0)
+        self.command_time = 0.0
+        self.reached = False
+        self.state = ""
+        self.nav_state = ""
+        self.goal_time = None
+        self.reset_seen = False
+        self.phases, self.goals = [], []
+        self.footprint = np.array(rospy.get_param("/robot_geometry/footprint"), dtype=np.float32)
+        self.map_pub = rospy.Publisher("/map", OccupancyGrid, queue_size=1, latch=True)
+        self.mask = rospy.Publisher("/corner_clearance_map", OccupancyGrid, queue_size=1, latch=True)
+        self.scan = rospy.Publisher("/scan", LaserScan, queue_size=2)
+        self.obstacles = rospy.Publisher("/scan_obstacles", LaserScan, queue_size=2)
+        self.obs = rospy.Publisher("/blue_target/observation", BlueTargetObservation, queue_size=2)
+        self.joint = rospy.Publisher("/gimbal/joint_states", JointState, queue_size=2)
+        self.amcl = rospy.Publisher("/amcl_pose", PoseWithCovarianceStamped, queue_size=2)
+        self.odom = rospy.Publisher("/odom", Odometry, queue_size=3)
+        self.enable = rospy.Publisher("/blue_autonomy/enable", Bool, queue_size=4)
+        self.initialpose = rospy.Publisher("/initialpose", PoseWithCovarianceStamped, queue_size=1)
+        self.gimbal = [rospy.Publisher("/gimbal/" + topic, Bool, queue_size=1, latch=True)
+                       for topic in ("connected", "servo_ready", "target_locked")]
+        self.tf = tf2_ros.TransformBroadcaster()
+        self.static_tf = tf2_ros.StaticTransformBroadcaster()
+        self.subscribers = [
+            rospy.Subscriber("/cmd_vel", Twist, self.on_cmd, queue_size=4),
+            rospy.Subscriber("/goal_reached", Bool, self.on_reached, queue_size=1),
+            rospy.Subscriber("/blue_autonomy/state", String, self.on_state, queue_size=5),
+            rospy.Subscriber("/handoff/nav_state", String, self.on_nav_state, queue_size=5),
+            rospy.Subscriber("/move_base/goal", MoveBaseActionGoal, self.on_goal, queue_size=5),
+            rospy.Subscriber("/initialpose", PoseWithCovarianceStamped, self.on_reset, queue_size=1),
+        ]
+        self.map_pub.publish(self.field.occupancy())
+        self.mask.publish(self.field.occupancy())
+        for pub in self.gimbal:
+            pub.publish(True)
+        now = rospy.Time.now()
+        self.static_tf.sendTransform([
+            self.transform(now, "map", "odom", 0, 0, 0),
+            self.transform(now, "base_footprint", "laser", .315, 0, 0),
+        ])
+        names = {"move_base", "handoff_blue_navigator", "handoff_direct_visual", "visual_handoff_manager"}
+        self.children = []
+        try:
+            for node in workspace_config.nodes:
+                if node.name not in names:
+                    continue
+                remaps = [f"{topic}:={destination}" for topic, destination in node.remap_args]
+                self.children.append(subprocess.Popen(
+                    ["rosrun", node.package, node.type, f"__name:={node.name}", *remaps]))
+            assert len(self.children) == len(names)
+        except BaseException:
+            self.close()
+            raise
+
+    def close(self):
+        for child in self.children:
+            child.terminate()
+        for child in self.children:
+            try:
+                child.wait(timeout=4)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait()
+
+    @staticmethod
+    def transform(stamp, source, child, x, y, yaw):
+        tf = TransformStamped()
+        tf.header.stamp, tf.header.frame_id, tf.child_frame_id = stamp, source, child
+        tf.transform.translation.x, tf.transform.translation.y = x, y
+        tf.transform.rotation.z, tf.transform.rotation.w = math.sin(yaw / 2), math.cos(yaw / 2)
+        return tf
+
+    def on_cmd(self, message):
+        self.command = (message.linear.x, message.angular.z)
+        self.command_time = time.monotonic()
+
+    def on_reached(self, message):
+        if message.data and not self.reached:
+            self.goal_time = time.monotonic()
+        self.reached = message.data
+
+    def on_state(self, message):
+        self.state = message.data
+        label = message.data.partition(":")[0]
+        if not self.phases or self.phases[-1] != label:
+            self.phases.append(label)
+        if label == "TERMINAL_PARK" and self.first_handoff is None:
+            self.first_handoff = tuple(self.pose)
+
+    def on_nav_state(self, message):
+        self.nav_state = message.data
+        if self.nav_state.startswith("OBSERVE:"):
+            self.observe_positions.append(tuple(self.pose))
+
+    def on_goal(self, message):
+        p = message.goal.target_pose.pose.position
+        self.goals.append([round(p.x, 3), round(p.y, 3)])
+
+    def on_reset(self, message):
+        p = message.pose.pose.position
+        self.pose = (p.x, p.y, yaw_of(message.pose.pose.orientation))
+        self.reset_seen = True
+
+    def simulate(self, step, marker, boxes, box_edges):
+        x, y, yaw = self.pose
+        v, w = self.command if time.monotonic() - self.command_time < .25 else (0.0, 0.0)
+        middle = yaw + step*w/2
+        x += step * v * math.cos(middle)
+        y += step * v * math.sin(middle)
+        yaw = angle(yaw + step * w)
+        self.pose = (x, y, yaw)
+
+        stamp = rospy.Time.now()
+        tf = self.transform(stamp, "odom", "base_footprint", x, y, yaw)
+        self.tf.sendTransform(tf)
+        odom = Odometry()
+        odom.header.stamp, odom.header.frame_id, odom.child_frame_id = stamp, "odom", "base_footprint"
+        odom.pose.pose.position.x, odom.pose.pose.position.y = x, y
+        odom.pose.pose.orientation = tf.transform.rotation
+        odom.twist.twist.linear.x, odom.twist.twist.angular.z = v, w
+        self.odom.publish(odom)
+        pose = PoseWithCovarianceStamped()
+        pose.header.stamp, pose.header.frame_id = stamp, "map"
+        pose.pose = odom.pose
+        pose.pose.covariance[0] = pose.pose.covariance[7] = .02**2
+        self.amcl.publish(pose)
+
+        c, s = math.cos(yaw), math.sin(yaw)
+        laser_x, laser_y = x + .315*c, y + .315*s
+        distances = self.field.cast(laser_x, laser_y, yaw + RANGES, box_edges)
+        scan = LaserScan()
+        scan.header.stamp, scan.header.frame_id = stamp, "laser"
+        scan.angle_min, scan.angle_max = RANGES[0], RANGES[-1]
+        scan.angle_increment = RANGES[1] - RANGES[0]
+        scan.range_min, scan.range_max = .10, 10.0
+        scan.ranges = np.where(distances < 10.0, distances, np.inf).tolist()
+        self.scan.publish(scan)
+        self.obstacles.publish(scan)
+
+        cam_x, cam_y = x + .145*c, y + .145*s
+        dx, dy = marker[0] - cam_x, marker[1] - cam_y
+        distance = math.hypot(dx, dy)
+        absolute = math.atan2(dy, dx)
+        bearing = angle(absolute - yaw)
+        visible = distance < self.field.camera_range and abs(bearing) <= math.radians(82)
+        if visible:
+            wall_range = self.field.cast(cam_x, cam_y, np.array([absolute]))[0]
+            # The simulated camera can see above the box. The laser cannot.
+            visible = abs(wall_range - distance) <= .08
+        if self.field.verify_dropout and self.state.startswith("TERMINAL_PARK:") and x > 6.315:
+            self.dropout_samples += 1
+            visible = False
+        joint = JointState()
+        joint.header.stamp = stamp
+        joint.name = ["camera_pan_joint", "camera_tilt_joint"]
+        joint.position = [bearing if visible else 0.0, 0.0]
+        self.joint.publish(joint)
+        obs = BlueTargetObservation()
+        obs.header.stamp, obs.detected = stamp, visible
+        obs.image_width, obs.image_height = 640, 480
+        obs.center_x, obs.center_y = 320, 240
+        obs.pixel_height = CAM_FOCAL * .297 / max(.12, distance)
+        obs.pixel_width = obs.pixel_height * .71
+        obs.contour_ratio = min(.09, obs.pixel_height * obs.pixel_width / (640 * 480))
+        self.obs.publish(obs)
+
+        # Audit independent of the map/costmaps and motion controllers.
+        body = (self.footprint @ np.array([[c, s], [-s, c]], dtype=np.float32) +
+                np.array([x, y], dtype=np.float32))
+        area = cv2.contourArea(body)
+        inside = sum(cv2.intersectConvexConvex(body, corners(floor))[0] for floor in self.field.floors)
+        if len(self.field.floors) == 2:
+            inside -= cv2.intersectConvexConvex(body, corners((4., -1.15, 6.25, 1.15)))[0]
+        hits_wall = inside < area - 1e-5
+        hits_box = any(cv2.intersectConvexConvex(body, corners(box))[0] > 1e-6 for box in boxes)
+        return body, hits_wall or hits_box
+
+    def run(self, name, index, marker, normal, boxes, timeout, field_directory):
+        terminal = None
+        try:
+            if name == "branches":
+                terminal = RaceTerminal(field_directory, index)
+            self.attempt(name, index, marker, normal, boxes, timeout, terminal)
+        finally:
+            if terminal is not None:
+                terminal.close()
+
+    def attempt(self, name, index, marker, normal, boxes, timeout, terminal):
+        self.first_handoff = None
+        self.dropout_samples = 0
+        self.observe_positions = []
+        self.phases.clear()
+        self.goals.clear()
+        self.reset_seen = False
+        collisions = 0
+        crossings = []
+        box_edges = [edge for x0, y0, x1, y1 in boxes for edge in
+                     ((x0, y0, x1, y0), (x0, y1, x1, y1), (x0, y0, x0, y1), (x1, y0, x1, y1))]
+        rate = rospy.Rate(30)
+        for _ in range(70 if index == 1 else 24):
+            if self.enable.get_num_connections():
+                self.enable.publish(False)
+            self.simulate(0.0, marker, boxes, box_edges)
+            rate.sleep()
+        assert self.state.startswith("IDLE:") and self.nav_state.startswith("IDLE:") and not self.reached
+        if terminal is None:
+            start = PoseWithCovarianceStamped()
+            start.header.stamp, start.header.frame_id = rospy.Time.now(), "map"
+            start.pose.pose.position.x, start.pose.pose.position.y = START[:2]
+            start.pose.pose.orientation.w = 1.0
+            self.initialpose.publish(start)
+            for _ in range(16):
+                self.simulate(0.0, marker, boxes, box_edges)
+                rate.sleep()
+            rospy.wait_for_service("/move_base/clear_costmaps", timeout=5)
+            rospy.ServiceProxy("/move_base/clear_costmaps", Empty)()
+            assert self.reset_seen and self.pose == START
+            self.enable.publish(True)
+        else:
+            deadline = time.monotonic() + 18
+            while not terminal.prepare():
+                assert time.monotonic() < deadline, terminal.read()
+                assert terminal.child.poll() is None, terminal.read()
+                self.simulate(0.0, marker, boxes, box_edges)
+                rate.sleep()
+            assert self.reset_seen and self.pose == START
+            terminal.trigger(b" " if index == 1 else b"\n")
+        started = last = time.monotonic()
+        first_approach = None
+        still = 0.0
+        while time.monotonic() - started < timeout:
+            now = time.monotonic()
+            body, collision = self.simulate(min(.06, now - last), marker, boxes, box_edges)
+            last = now
+            collisions += bool(collision)
+            if name == "box" and 5.35 <= self.pose[0] <= 5.85:
+                crossings.append(abs(self.pose[1]))
+            if self.state.startswith("TARGET_APPROACH:") and first_approach is None:
+                first_approach = tuple(self.pose)
+            if self.reached:
+                if self.command != (0.0, 0.0):
+                    raise AssertionError("nonzero velocity after completion")
+                still = now - self.goal_time
+                if still >= 3.0 and (terminal is None or "静止 3.0 s" in terminal.read()):
+                    break
+            rate.sleep()
+
+        offsets = body - np.array(marker, dtype=np.float32)
+        depth = offsets @ np.array(normal)
+        lateral = offsets @ np.array([-normal[1], normal[0]])
+        handoff_distance = (None if self.first_handoff is None else
+                            math.hypot(self.first_handoff[0] - marker[0], self.first_handoff[1] - marker[1]))
+        report = dict(scenario=name, attempt=index, phases=self.phases, goals=self.goals,
+                      collisions=collisions, last_state=self.state, final_pose=self.pose,
+                      depth=[float(min(depth)), float(max(depth))],
+                      lateral=[float(min(lateral)), float(max(lateral))],
+                      side_clearance=min(crossings) if crossings else None,
+                      first_approach=first_approach, handoff_distance=handoff_distance,
+                      observed=self.observe_positions, still_seconds=still,
+                      dropout_samples=self.dropout_samples)
+        print(json.dumps(report), flush=True)
+        assert collisions == 0, "physical footprint touched a wall or box"
+        assert self.reached and still >= 3.0, "terminal completion or three-second zero hold missing"
+        assert 0 <= min(depth) and max(depth) <= .80 and max(abs(lateral)) <= .40, "outside finish"
+        expected = ["EXPLORE", "TARGET_APPROACH", "TERMINAL_PARK", "COMPLETE"]
+        assert all(label in self.phases for label in expected)
+        assert [self.phases.index(label) for label in expected] == sorted(
+            self.phases.index(label) for label in expected)
+        assert handoff_distance is not None and handoff_distance <= 1.34
+        if name == "box":
+            assert 1.10 < first_approach[0] < 5.10 and crossings and min(crossings) > .45
+            assert self.dropout_samples > 0
+        if name == "branches" and index == 1:
+            assert any(position[1] > 2.5 for position in self.observe_positions)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("scenario", choices=("box", "corner", "branches"))
+    parser.add_argument("--timeout", type=float, default=65)
+    args = parser.parse_args(rospy.myargv()[1:])
+    if os.environ.get("ROS_MASTER_URI") != MASTER:
+        parser.error("run on isolated ROS master port 11329")
+    rospy.init_node("competition_handoff_sim")
+    launch = WORKSPACE / "src/maze_bridge/launch/navigation_visual_handoff.launch"
+    config = roslaunch.config.load_config_default([(str(launch), [
+        "map_file:=/tmp/simulated_map.yaml", f"initial_pose_x:={START[0]}",
+        f"initial_pose_y:={START[1]}", f"initial_pose_a:={START[2]}", "auto_start:=false",
+    ])], None)
+    for key, param in config.params.items():
+        rospy.set_param(key, param.value)
+    field = Field(args.scenario)
+    sim = Simulation(field, config)
+    try:
+        with tempfile.TemporaryDirectory(prefix="competition-sim-") as tempdir:
+            directory = Path(tempdir)
+            (directory / "start_pose.json").write_text(
+                json.dumps(dict(zip(("x", "y", "yaw"), START))))
+            for index, (marker, normal, boxes) in enumerate(field.attempts, 1):
+                sim.run(args.scenario, index, marker, normal, boxes, args.timeout, directory)
+    finally:
+        sim.enable.publish(False)
+        time.sleep(.1)
+        sim.close()
+
+
+if __name__ == "__main__":
+    main()

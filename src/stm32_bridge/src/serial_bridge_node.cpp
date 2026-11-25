@@ -33,6 +33,11 @@ using stm32_bridge::packControl;
 using stm32_bridge::trajectoryIntersects;
 using stm32_bridge::unpackFeedback;
 
+namespace {
+constexpr double kMaxSerialLinearSpeed = 1.8;
+constexpr double kMaxSerialAngularSpeed = 9.0;
+}
+
 /**
  * 串口桥接节点（手柄控制 + 接收 /cmd_vel 自动导航）
  *
@@ -57,6 +62,10 @@ public:
     nh_.param<std::string>("joy_dev", joy_dev_, "/dev/input/js0");
     nh_.param<double>("max_v", max_v_, 0.5);
     nh_.param<double>("max_w", max_w_, 1.0);
+    nh_.param<double>("cmd_max_v", cmd_max_v_, kMaxSerialLinearSpeed);
+    nh_.param<double>("cmd_max_w", cmd_max_w_, kMaxSerialAngularSpeed);
+    cmd_max_v_ = std::min(kMaxSerialLinearSpeed, std::max(0.0, cmd_max_v_));
+    cmd_max_w_ = std::min(kMaxSerialAngularSpeed, std::max(0.0, cmd_max_w_));
     nh_.param<double>("deadzone", deadzone_, 0.1);
     nh_.param<int>("angular_command_sign", angular_command_sign_, -1);
     nh_.param<int>("joy_angular_axis_sign", joy_angular_axis_sign_, -1);
@@ -191,9 +200,17 @@ private:
   }
 
   void cmdCb(const geometry_msgs::Twist::ConstPtr& msg) {
-    cmd_v_ = msg->linear.x;
-    cmd_w_ = msg->angular.z;
     last_cmd_time_ = ros::Time::now();
+    const double v = msg->linear.x;
+    const double w = msg->angular.z;
+    if (!std::isfinite(v) || !std::isfinite(w)) {
+      cmd_v_ = 0.0;
+      cmd_w_ = 0.0;
+      ROS_WARN_THROTTLE(1.0, "Non-finite /cmd_vel rejected");
+      return;
+    }
+    cmd_v_ = v;
+    cmd_w_ = w;
   }
 
   void goalCb(const std_msgs::Bool::ConstPtr& msg) {
@@ -333,6 +350,13 @@ private:
       safety_stopped = true;
       control_source += "+navigation_reverse_blocked";
       ROS_WARN_THROTTLE(0.5, "Autonomous reverse command rejected: full twist stopped");
+    } else if (control_source == "cmd_vel") {
+      // Limit the complete twist before the lidar checks so the arc keeps its curvature.
+      const double linear_scale = std::abs(v) > cmd_max_v_ ? cmd_max_v_ / std::abs(v) : 1.0;
+      const double angular_scale = std::abs(w) > cmd_max_w_ ? cmd_max_w_ / std::abs(w) : 1.0;
+      const double scale = std::min(linear_scale, angular_scale);
+      v *= scale;
+      w *= scale;
     } else if (control_source == "joystick" && v < -joystick_reverse_max_speed_) {
       v = -joystick_reverse_max_speed_;
       control_source += "+reverse_speed_limited";
@@ -443,10 +467,11 @@ private:
     // ========== 4. 发送串口 ==========
     if (ser_.isOpen()) {
       ControlCmd cmd;
-      cmd.v_mm_s = static_cast<int16_t>(std::max(-1.8, std::min(1.8, v)) * 1000.0);
+      cmd.v_mm_s = static_cast<int16_t>(
+          std::max(-kMaxSerialLinearSpeed, std::min(kMaxSerialLinearSpeed, v)) * 1000.0);
       const double hardware_w = w * static_cast<double>(angular_command_sign_);
       cmd.w_mrad_s = static_cast<int16_t>(
-          std::max(-9.0, std::min(9.0, hardware_w)) * 1000.0);
+          std::max(-kMaxSerialAngularSpeed, std::min(kMaxSerialAngularSpeed, hardware_w)) * 1000.0);
       const auto frame = packControl(cmd, ControlProtocol{});
       ser_.write(frame);
     }
@@ -511,6 +536,8 @@ private:
   std::string joy_dev_;
   double max_v_{0.5};
   double max_w_{1.0};
+  double cmd_max_v_;
+  double cmd_max_w_;
   double deadzone_{0.1};
   int angular_command_sign_{-1};
   int joy_angular_axis_sign_{-1};

@@ -51,8 +51,9 @@
   <arg name="vehicle_rear_x" default="-0.1517"/>
   <arg name="vehicle_half_width" default="0.24"/>
   <arg name="max_v" default="0.50"/>
-  <arg name="max_nav_v" default="0.50"/>
-  <arg name="max_nav_w" default="0.75"/>
+  <arg name="max_w" default="0.75"/>
+  <arg name="max_nav_v" default="$(arg max_v)"/>
+  <arg name="max_nav_w" default="$(arg max_w)"/>
   <arg name="wheel_diameter" default="0.166224818"/>
   <!-- 物理轮中心距为0.425m；差速/滑移转向的里程计必须使用旋转实测得到的
        有效轮距。2026-10-05 地面标定采用有效值0.408879504m。 -->
@@ -155,7 +156,9 @@
     <param name="port" value="$(arg port)"/>
     <param name="baud" value="$(arg baud)"/>
     <param name="max_v" value="$(arg max_v)"/>
-    <param name="max_w" value="0.75"/>
+    <param name="max_w" value="$(arg max_w)"/>
+    <param name="cmd_max_v" value="$(arg max_v)"/>
+    <param name="cmd_max_w" value="$(arg max_w)"/>
     <param name="angular_command_sign" value="$(arg angular_command_sign)"/>
     <param name="safety_enable" value="$(arg safety_enable)"/>
     <param name="safety_stop_distance" value="$(arg safety_stop_distance)"/>
@@ -400,9 +403,9 @@
       <rosparam if="$(arg corner_clearance)" file="$(find maze_bridge)/launch/corner_clearance_costmap_params.yaml" command="load"/>
       <rosparam file="$(find maze_bridge)/launch/teb_local_planner_params_v2.yaml" command="load"/>
       <rosparam if="$(arg smooth_global_plan)" file="$(find maze_bridge)/launch/smooth_teb_params.yaml" command="load"/>
-      <!-- Explicit startup limits also apply before the first goal is sent. -->
-      <param name="TebLocalPlannerROS/max_vel_x" value="$(arg max_nav_v)"/>
-      <param name="TebLocalPlannerROS/max_vel_theta" value="$(arg max_nav_w)"/>
+      <!-- A lower planner limit can be set without changing the bridge limit. -->
+      <param name="TebLocalPlannerROS/max_vel_x" value="$(eval min(float(arg('max_nav_v')), float(arg('max_v'))))"/>
+      <param name="TebLocalPlannerROS/max_vel_theta" value="$(eval min(float(arg('max_nav_w')), float(arg('max_w'))))"/>
     </node>
 
     <!-- 加载地图 -->

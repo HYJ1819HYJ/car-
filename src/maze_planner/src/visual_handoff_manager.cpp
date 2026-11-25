@@ -1,5 +1,4 @@
 #include <ros/ros.h>
-#include <geometry_msgs/PoseStamped.h>
 #include <geometry_msgs/Twist.h>
 #include <sensor_msgs/CameraInfo.h>
 #include <sensor_msgs/JointState.h>
@@ -9,6 +8,7 @@
 #include <stm32_bridge/BlueTargetObservation.h>
 #include <stm32_bridge/footprint_parameters.hpp>
 #include <maze_planner/handoff_corridor.h>
+#include <maze_planner/gimbal_history.h>
 #include <maze_planner/visual_tracking.h>
 #include <maze_planner/wall_parking.h>
 
@@ -21,11 +21,13 @@ class VisualHandoffManager {
  public:
   VisualHandoffManager() : nh_(), pnh_("~") {
     pnh_.param<bool>("auto_start", auto_start_, false);
+    pnh_.param<bool>("competition_mode", competition_mode_, false);
+    pnh_.param<double>("max_handoff_distance", max_handoff_distance_, 1.30);
     pnh_.param<int>("required_clear_scans", required_clear_scans_, 3);
     pnh_.param<double>("camera_x", camera_x_, .145);
     pnh_.param<double>("camera_y", camera_y_, 0.0);
     pnh_.param<double>("paper_height", paper_height_, .297);
-    pnh_.param<double>("fallback_hfov_deg", fallback_hfov_deg_, 70.0);
+    pnh_.param<double>("fallback_hfov_deg", fallback_hfov_deg_, 88.0);
     pnh_.param<double>("max_target_range", max_target_range_, 8.0);
     pnh_.param<double>("range_absolute_tolerance", range_absolute_tolerance_, .25);
     pnh_.param<double>("range_relative_tolerance", range_relative_tolerance_, .20);
@@ -37,8 +39,6 @@ class VisualHandoffManager {
     pnh_.param<double>("laser_y", corridor_params_.laser_y, 0.0);
     pnh_.param<double>("laser_yaw", corridor_params_.laser_yaw, 0.0);
     pnh_.param<double>("corridor_check_standoff", corridor_params_.check_standoff, .48);
-    pnh_.param<double>("finish_observation_distance", finish_observation_distance_, 0.0);
-    pnh_.param<double>("finish_max_lateral_error", finish_max_lateral_error_, .20);
     pnh_.param<double>("corridor_sample_step", corridor_params_.sample_step, .10);
     pnh_.param<double>("corridor_ray_margin", corridor_params_.ray_margin, .04);
     pnh_.param<double>("turn_check_rate", corridor_params_.turn_rate, .25);
@@ -54,8 +54,6 @@ class VisualHandoffManager {
     footprint_.padding = .03;
 
     command_pub_ = nh_.advertise<geometry_msgs::Twist>("/cmd_vel", 1);
-    finish_observation_pub_ = nh_.advertise<geometry_msgs::PoseStamped>(
-        "/handoff/finish_observation_goal", 1);
     nav_enable_pub_ = nh_.advertise<std_msgs::Bool>("/handoff/nav_enable", 1, true);
     visual_enable_pub_ = nh_.advertise<std_msgs::Bool>("/handoff/visual_enable", 1, true);
     goal_pub_ = nh_.advertise<std_msgs::Bool>("/goal_reached", 1, true);
@@ -77,7 +75,7 @@ class VisualHandoffManager {
     publishBool(goal_pub_, false);
     publishState("IDLE: automatic handoff disabled");
     if (auto_start_) startNavigation();
-    timer_ = nh_.createTimer(ros::Duration(.20), &VisualHandoffManager::timerCb, this);
+    timer_ = nh_.createTimer(ros::Duration(.05), &VisualHandoffManager::timerCb, this);
   }
 
  private:
@@ -100,14 +98,17 @@ class VisualHandoffManager {
   void startNavigation() {
     mode_ = Mode::NAVIGATION;
     clear_scans_ = 0;
-    finish_observation_samples_ = 0;
     nav_state_.clear();
+    visual_state_.clear();
+    visual_blocked_since_ = ros::Time();
+    race_start_ = ros::Time::now();
+    recheck_after_ = ros::Time();
     checked_scan_stamp_ = ros::Time(0);
     publishStop();
     publishBool(goal_pub_, false);
     publishBool(visual_enable_pub_, false);
     publishBool(nav_enable_pub_, true);
-    publishState("NAVIGATION: searching for the blue marker");
+    publishState("EXPLORE: waiting for navigation and target");
   }
   void enableCb(const std_msgs::Bool::ConstPtr& msg) {
     if (msg->data) {
@@ -128,9 +129,15 @@ class VisualHandoffManager {
   void visualCmdCb(const geometry_msgs::Twist::ConstPtr& msg) {
     if (mode_ == Mode::VISUAL) command_pub_.publish(*msg);
   }
-  void navStateCb(const std_msgs::String::ConstPtr& msg) { nav_state_ = msg->data; }
+  void navStateCb(const std_msgs::String::ConstPtr& msg) {
+    nav_state_ = msg->data;
+    if (mode_ == Mode::NAVIGATION && nav_state_.find("IDLE:") != 0)
+      publishState((nav_state_.find("APPROACH:") == 0 ? "TARGET_APPROACH: " : "EXPLORE: ") +
+                   nav_state_);
+  }
   void visualStateCb(const std_msgs::String::ConstPtr& msg) {
-    if (mode_ == Mode::VISUAL) publishState("VISUAL: " + msg->data);
+    visual_state_ = msg->data;
+    if (mode_ == Mode::VISUAL) publishState("TERMINAL_PARK: " + msg->data);
   }
   void visualGoalCb(const std_msgs::Bool::ConstPtr& msg) {
     if (mode_ != Mode::VISUAL || !msg->data) return;
@@ -145,21 +152,12 @@ class VisualHandoffManager {
     have_observation_ = true;
   }
   void jointCb(const sensor_msgs::JointState::ConstPtr& msg) {
-    bool found_pan = false;
-    for (std::size_t i = 0; i < msg->name.size() && i < msg->position.size(); ++i) {
-      if (msg->name[i] == "camera_pan_joint") { pan_ = msg->position[i]; found_pan = true; }
-      if (msg->name[i] == "camera_tilt_joint") tilt_ = msg->position[i];
-    }
-    if (found_pan) {
-      joint_received_ = ros::Time::now();
-      joint_stamp_ = msg->header.stamp;
-      have_joint_ = true;
-    }
+    gimbal_history_.add(*msg);
+    joint_received_ = ros::Time::now();
   }
   void scanCb(const sensor_msgs::LaserScan::ConstPtr& msg) {
     scan_ = *msg;
     scan_received_ = ros::Time::now();
-    have_scan_ = true;
   }
   void cameraCb(const sensor_msgs::CameraInfo::ConstPtr& msg) {
     camera_info_ = *msg;
@@ -171,6 +169,9 @@ class VisualHandoffManager {
   bool targetGeometry(double* bearing, double* horizontal_range) const {
     if (!observation_.detected || !observation_.image_width || !observation_.image_height ||
         observation_.pixel_height <= 0.0) return false;
+    double pan = 0.0, tilt = 0.0;
+    if (!gimbal_history_.angles(observation_.header.stamp, &pan, &tilt, max_sensor_skew_))
+      return false;
     double fx, fy;
     double cx = .5*observation_.image_width, cy = .5*observation_.image_height;
     if (have_camera_info_) {
@@ -183,24 +184,23 @@ class VisualHandoffManager {
       fx = observation_.image_width/(2.0*std::tan(.5*hfov));
       fy = fx;
     }
-    if (!maze_planner::visualBearing(pan_, tilt_, observation_.center_x,
+    if (!maze_planner::visualBearing(pan, tilt, observation_.center_x,
                                       observation_.center_y, cx, cy, fx, fy, bearing)) return false;
-    const double down = tilt_+std::atan2(observation_.center_y-cy, fy);
+    const double down = tilt+std::atan2(observation_.center_y-cy, fy);
     *horizontal_range = fy*paper_height_/observation_.pixel_height*std::cos(down);
     return std::isfinite(*horizontal_range) && *horizontal_range > 0.0 &&
            *horizontal_range <= max_target_range_;
   }
 
-  bool corridorReady(maze_planner::WallObservation* associated_wall, std::string* reason) {
+  bool corridorReady(std::string* reason) {
     const ros::Time now = ros::Time::now();
     if (!have_observation_ || (now-observation_received_).toSec() > observation_timeout_ ||
-        !have_joint_ || (now-joint_received_).toSec() > joint_timeout_ ||
-        !have_scan_ || (now-scan_received_).toSec() > scan_timeout_) {
+        (now-joint_received_).toSec() > joint_timeout_ ||
+        (now-scan_received_).toSec() > scan_timeout_) {
       *reason = "waiting for camera, gimbal or lidar";
       return false;
     }
-    if (observation_.header.stamp.isZero() || joint_stamp_.isZero() || scan_.header.stamp.isZero() ||
-        std::fabs((observation_.header.stamp-joint_stamp_).toSec()) > max_sensor_skew_ ||
+    if (observation_.header.stamp < race_start_ || scan_.header.stamp.isZero() ||
         std::fabs((observation_.header.stamp-scan_.header.stamp).toSec()) > max_sensor_skew_) {
       *reason = "camera, gimbal and lidar timestamps do not agree";
       return false;
@@ -225,96 +225,85 @@ class VisualHandoffManager {
       obstacles.push_back(point);
     }
     maze_planner::WallObservation wall;
-    if (!maze_planner::fitTargetWall(points, {camera_x_,camera_y_}, bearing, &wall,
-                                      max_target_range_)) {
+    const double tolerance = std::max(range_absolute_tolerance_,
+                                       range_relative_tolerance_ * visual_range);
+    if (!maze_planner::fitTargetWall(points, {camera_x_, camera_y_}, bearing, &wall,
+                                      max_target_range_, visual_range, tolerance)) {
       *reason = "no lidar surface associated with blue marker";
       return false;
     }
-    const double lidar_range = std::hypot(wall.marker.x-camera_x_, wall.marker.y-camera_y_);
-    const double tolerance = std::max(range_absolute_tolerance_,
-                                       range_relative_tolerance_*visual_range);
-    if (std::fabs(lidar_range-visual_range) > tolerance) {
-      *reason = "camera and lidar target distances differ";
-      return false;
-    }
-    *associated_wall = wall;
     const maze_planner::Point2 tangent(-wall.outward.y, wall.outward.x);
-    if (finish_observation_distance_ > corridor_params_.check_standoff &&
-        std::fabs(maze_planner::dot(wall.marker, tangent)) > finish_max_lateral_error_) {
-      *reason = "blue marker approach needs lateral alignment";
+    const double lateral = std::abs(maze_planner::dot(wall.marker, tangent));
+    const double depth = -maze_planner::dot(wall.marker, wall.outward);
+    const bool close_and_aligned = maze_planner::norm(wall.marker) <= max_handoff_distance_ &&
+                                   lateral <= .32;
+    const bool entrance_reached = nav_state_.find("APPROACH: entrance reached") == 0 &&
+                                  depth <= 1.15 && lateral <= .38 &&
+                                  maze_planner::norm(wall.marker) <= max_handoff_distance_;
+    if (!close_and_aligned && !entrance_reached) {
+      *reason = "outside the short-range terminal corridor";
       return false;
     }
+    // The same swept-body and observed-ray check also governs the entrance
+    // fallback. Arriving at a navigation goal never proves the corridor clear.
     return maze_planner::handoffCorridorClear(scan_, obstacles, footprint_,
                                                wall.marker.x, wall.marker.y,
                                                corridor_params_, reason);
   }
 
-  void suggestFinishObservation(const maze_planner::WallObservation& wall) {
-    if (finish_observation_distance_ <= corridor_params_.check_standoff ||
-        nav_state_ != "OBSERVE: mapped course end reached; scanning for blue marker" ||
-        wall.inliers == 0) {
-      finish_observation_samples_ = 0;
-      return;
-    }
-    const auto candidate = maze_planner::parkingPosition(wall, finish_observation_distance_);
-    const double travel = maze_planner::norm(candidate);
-    const double progress = maze_planner::norm(wall.marker) - finish_observation_distance_;
-    if (travel < .20 || travel > 1.25 || progress < .20) {
-      finish_observation_samples_ = 0;
-      return;
-    }
-    if (maze_planner::norm(candidate-last_finish_observation_) > .15)
-      finish_observation_samples_ = 0;
-    last_finish_observation_ = candidate;
-    if (++finish_observation_samples_ < required_clear_scans_) return;
-    finish_observation_samples_ = 0;
-
-    geometry_msgs::PoseStamped goal;
-    goal.header.stamp = ros::Time::now();
-    goal.header.frame_id = "base_footprint";
-    goal.pose.position.x = candidate.x;
-    goal.pose.position.y = candidate.y;
-    const double half_yaw = .5*maze_planner::parkingYaw(wall);
-    goal.pose.orientation.z = std::sin(half_yaw);
-    goal.pose.orientation.w = std::cos(half_yaw);
-    finish_observation_pub_.publish(goal);
+  void switchToVisual(const std::string& reason) {
+    // The arbiter stops forwarding navigation before enabling visual control.
+    mode_ = Mode::VISUAL;
+    publishStop();
+    if (!competition_mode_) publishBool(nav_enable_pub_, false);
+    visual_state_.clear();
+    visual_blocked_since_ = ros::Time();
+    publishBool(visual_enable_pub_, true);
+    publishState("TERMINAL_PARK: " + reason);
   }
 
   void timerCb(const ros::TimerEvent&) {
-    if (mode_ != Mode::NAVIGATION) return;
-    if (!have_scan_ || (ros::Time::now()-scan_received_).toSec() > scan_timeout_) {
+    if (mode_ == Mode::IDLE || mode_ == Mode::COMPLETE) {
+      publishStop();
+      if (mode_ == Mode::COMPLETE) publishBool(goal_pub_, true);
+      return;
+    }
+    const auto now = ros::Time::now();
+    if (mode_ == Mode::VISUAL) {
+      const bool blocked = visual_state_.find("BLOCKED") == 0;
+      if (!blocked) visual_blocked_since_ = ros::Time();
+      else if (visual_blocked_since_.isZero()) visual_blocked_since_ = now;
+      else if (competition_mode_ && (now - visual_blocked_since_).toSec() >= .4) {
+        publishStop();
+        mode_ = Mode::NAVIGATION;
+        clear_scans_ = 0;
+        checked_scan_stamp_ = scan_.header.stamp;
+        recheck_after_ = now + ros::Duration(1.0);
+        publishBool(visual_enable_pub_, false);
+        publishState("TARGET_APPROACH: terminal corridor blocked; returning to move_base");
+      }
+      return;
+    }
+    if ((now - scan_received_).toSec() > scan_timeout_ ||
+        (competition_mode_ && nav_state_.find("APPROACH:") != 0) ||
+        now < recheck_after_) {
       clear_scans_ = 0;
-      finish_observation_samples_ = 0;
-      publishState("NAVIGATION: waiting for lidar");
       return;
     }
     if (scan_.header.stamp == checked_scan_stamp_) return;
     checked_scan_stamp_ = scan_.header.stamp;
     std::string reason;
-    maze_planner::WallObservation wall;
-    if (!corridorReady(&wall, &reason)) {
+    if (!corridorReady(&reason)) {
       clear_scans_ = 0;
-      publishState("NAVIGATION: " + reason);
-      suggestFinishObservation(wall);
+      ROS_DEBUG_THROTTLE(1.0, "Terminal handoff waiting: %s", reason.c_str());
       return;
     }
-    finish_observation_samples_ = 0;
-    if (++clear_scans_ < required_clear_scans_) {
-      publishState("NAVIGATION: confirming clear corridor");
-      return;
-    }
-
-    // The arbiter stops forwarding navigation before enabling visual control.
-    mode_ = Mode::VISUAL;
-    publishStop();
-    publishBool(nav_enable_pub_, false);
-    publishBool(visual_enable_pub_, true);
-    publishState("VISUAL: lidar corridor clear; direct tracking enabled");
+    if (++clear_scans_ >= required_clear_scans_)
+      switchToVisual("lidar corridor clear; final parking enabled");
   }
 
   ros::NodeHandle nh_, pnh_;
   ros::Publisher command_pub_, nav_enable_pub_, visual_enable_pub_, goal_pub_, state_pub_;
-  ros::Publisher finish_observation_pub_;
   ros::Subscriber enable_sub_, nav_cmd_sub_, visual_cmd_sub_, nav_state_sub_, visual_state_sub_;
   ros::Subscriber visual_goal_sub_, observation_sub_, joint_sub_, scan_sub_, camera_sub_;
   ros::Timer timer_;
@@ -323,20 +312,18 @@ class VisualHandoffManager {
   stm32_bridge::BlueTargetObservation observation_;
   sensor_msgs::LaserScan scan_;
   sensor_msgs::CameraInfo camera_info_;
-  ros::Time observation_received_, joint_received_, joint_stamp_, scan_received_, checked_scan_stamp_;
+  ros::Time observation_received_, joint_received_, scan_received_, checked_scan_stamp_;
+  ros::Time race_start_, visual_blocked_since_, recheck_after_;
   Mode mode_{Mode::IDLE};
-  bool auto_start_{false}, have_observation_{false}, have_joint_{false}, have_scan_{false};
-  bool have_camera_info_{false};
+  bool auto_start_{false}, competition_mode_{false};
+  bool have_observation_{false}, have_camera_info_{false};
   int required_clear_scans_{3}, clear_scans_{0};
-  int finish_observation_samples_{0};
-  double finish_observation_distance_{0.0};
-  double finish_max_lateral_error_{.20};
-  maze_planner::Point2 last_finish_observation_;
-  double camera_x_{.145}, camera_y_{0.0}, paper_height_{.297}, fallback_hfov_deg_{70.0};
+  double max_handoff_distance_{1.30};
+  maze_planner::GimbalHistory gimbal_history_;
+  double camera_x_{.145}, camera_y_{0.0}, paper_height_{.297}, fallback_hfov_deg_{88.0};
   double max_target_range_{8.0}, range_absolute_tolerance_{.25}, range_relative_tolerance_{.20};
   double scan_timeout_{.5}, observation_timeout_{.5}, joint_timeout_{1.5}, max_sensor_skew_{.5};
-  double pan_{0.0}, tilt_{0.0};
-  std::string state_, nav_state_;
+  std::string state_, nav_state_, visual_state_;
 };
 
 int main(int argc, char** argv) {
