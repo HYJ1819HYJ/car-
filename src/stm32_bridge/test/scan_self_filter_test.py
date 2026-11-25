@@ -10,7 +10,7 @@ from sensor_msgs.msg import LaserScan
 
 
 class ScanObservationContract(unittest.TestCase):
-    def test_two_streams_preserve_visibility_semantics(self):
+    def collect_scan_streams(self, scan):
         messages = {}
         lock = threading.Lock()
         def receive(message, topic):
@@ -19,6 +19,21 @@ class ScanObservationContract(unittest.TestCase):
         subscribers = [rospy.Subscriber(topic, LaserScan, receive, topic, queue_size=1)
                        for topic in ['/filter_test/slam', '/filter_test/obstacles']]
         publisher = rospy.Publisher('/filter_test/raw', LaserScan, queue_size=1)
+        try:
+            deadline = time.monotonic()+5
+            while time.monotonic() < deadline:
+                publisher.publish(scan)
+                time.sleep(.03)
+                with lock:
+                    if len(messages) == 2:
+                        return messages['/filter_test/slam'], messages['/filter_test/obstacles']
+            self.fail('Both scan streams must publish')
+        finally:
+            for subscriber in subscribers:
+                subscriber.unregister()
+            publisher.unregister()
+
+    def test_two_streams_preserve_visibility_semantics(self):
         scan = LaserScan()
         scan.header.frame_id = 'laser'
         scan.header.stamp = rospy.Time.now()
@@ -32,16 +47,7 @@ class ScanObservationContract(unittest.TestCase):
         # and an external return close to the front edge of the body.
         scan.ranges = [.8, float('inf'), .12, float('nan'), .06]
         scan.intensities = [10., 20., 30., 40., 50.]
-        deadline = time.monotonic()+5
-        while time.monotonic() < deadline:
-            publisher.publish(scan)
-            time.sleep(.03)
-            with lock:
-                if len(messages) == 2:
-                    break
-        with lock:
-            self.assertEqual(len(messages), 2, 'Both scan streams must publish')
-            slam, obstacle = messages['/filter_test/slam'], messages['/filter_test/obstacles']
+        slam, obstacle = self.collect_scan_streams(scan)
         for message in [slam, obstacle]:
             self.assertEqual(message.header.frame_id, scan.header.frame_id)
             self.assertEqual(message.header.stamp, scan.header.stamp)
@@ -55,9 +61,24 @@ class ScanObservationContract(unittest.TestCase):
             self.assertEqual(message.intensities[2], 0.)
         self.assertTrue(math.isinf(slam.ranges[2]))
         self.assertTrue(math.isnan(obstacle.ranges[2]), 'An occluded ray cannot clear space')
-        for subscriber in subscribers:
-            subscriber.unregister()
-        publisher.unregister()
+
+    def test_fixed_echo_keeps_other_returns_from_the_rear(self):
+        scan = LaserScan()
+        scan.header.frame_id = 'laser'
+        scan.header.stamp = rospy.Time.now()
+        scan.angle_min = math.radians(125.5)
+        scan.angle_increment = math.radians(.25)
+        scan.angle_max = math.radians(127.0)
+        scan.range_min, scan.range_max = .10, 10.0
+        # Keep a similar-distance return at another angle and both distinct
+        # ranges in the calibrated direction. Only the known echo is occluded.
+        scan.ranges = [.357, .357, .334, .357, .40, .357, .357]
+        slam, obstacles = self.collect_scan_streams(scan)
+        self.assertTrue(math.isinf(slam.ranges[3]))
+        self.assertTrue(math.isnan(obstacles.ranges[3]))
+        for i in (0, 2, 4, 6):
+            for stream in (slam, obstacles):
+                self.assertAlmostEqual(stream.ranges[i], scan.ranges[i], places=6)
 
 
 if __name__ == '__main__':

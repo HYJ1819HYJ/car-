@@ -159,6 +159,10 @@ class BlueGoalNavigator {
                                        &BlueGoalNavigator::gimbalLockedCb, this);
     enable_sub_ = nh_.subscribe("/blue_autonomy/enable", 2,
                                 &BlueGoalNavigator::enableCb, this);
+    if (hold_at_course_end_ && !acquire_target_in_navigation_) {
+      finish_observation_sub_ = nh_.subscribe("/handoff/finish_observation_goal", 1,
+          &BlueGoalNavigator::finishObservationCb, this);
+    }
     tolerance_client_ = nh_.serviceClient<dynamic_reconfigure::Reconfigure>(
         "/move_base/TebLocalPlannerROS/set_parameters");
     loadFootprint();
@@ -427,6 +431,7 @@ class BlueGoalNavigator {
       goal_kind_ = GoalKind::NONE;
       search_index_ = 0;
       course_index_ = 0;
+      finish_observation_attempted_ = false;
       current_goal_is_course_ = false;
       estimates_.clear();
       current_visual_standoff_ = visual_approach_standoff_;
@@ -966,6 +971,40 @@ class BlueGoalNavigator {
         "approach goal reached; base stop latched for judge confirmation");
   }
 
+  bool shouldHoldAtCourseEnd() const {
+    return hold_at_course_end_ && !course_waypoints_.empty() &&
+           course_index_ >= course_waypoints_.size();
+  }
+
+  void finishObservationCb(const geometry_msgs::PoseStamped::ConstPtr& message) {
+    const double age = (ros::Time::now() - message->header.stamp).toSec();
+    if (!enabled_ || state_ != State::OBSERVE || !shouldHoldAtCourseEnd() ||
+        goal_active_ || finish_observation_attempted_ || message->header.frame_id != base_frame_ ||
+        message->header.stamp.isZero() || age < 0.0 || age > .5) return;
+
+    std::string reason;
+    if (!systemReady(&reason)) return;
+    double x = 0.0, y = 0.0, yaw = 0.0;
+    if (!robotPose(&x, &y, &yaw)) return;
+    const maze_planner::Point2 relative(message->pose.position.x, message->pose.position.y);
+    const auto goal = maze_planner::Point2(x, y) + maze_planner::rotate(relative, yaw);
+    const double heading = yaw + yawFromQuaternion(message->pose.orientation);
+    if (!std::isfinite(goal.x) || !std::isfinite(goal.y) || !std::isfinite(heading)) return;
+
+    const maze_planner::Point2 toward_wall(std::cos(heading), std::sin(heading));
+    const double extra_standoffs[] = {0.0, .10, .20, .30, .40};
+    for (double extra : extra_standoffs) {
+      const auto candidate = goal - extra * toward_wall;
+      if (std::hypot(candidate.x-x, candidate.y-y) < .20 ||
+          !pointHasClearance(candidate.x, candidate.y, approach_clearance_)) continue;
+      finish_observation_attempted_ = true;
+      sendMoveBaseGoal(candidate.x, candidate.y, heading, GoalKind::SEARCH);
+      setState(State::OBSERVE, "navigating to a closer finish observation pose");
+      return;
+    }
+    ROS_WARN_THROTTLE(3.0, "No aligned finish observation pose has enough map clearance");
+  }
+
   void handleSearchState() {
     if (target_visible_) return;
     if (!goal_active_) {
@@ -985,7 +1024,7 @@ class BlueGoalNavigator {
           sendNextSearchGoal();
         } else {
           waypoint_observation_start_time_ = ros::Time::now();
-          setState(State::OBSERVE, was_course_goal && hold_at_course_end_ ?
+          setState(State::OBSERVE, was_course_goal && shouldHoldAtCourseEnd() ?
               "mapped course end reached; scanning for blue marker" :
               "search waypoint reached; observing for blue paper and black line");
         }
@@ -1001,8 +1040,19 @@ class BlueGoalNavigator {
     if (target_visible_) return;
     // The final recorded point is in the finish area. Keep scanning there;
     // generic free-space waypoints can lead back through the course.
-    if (hold_at_course_end_ && !course_waypoints_.empty() &&
-        course_index_ >= course_waypoints_.size()) return;
+    if (shouldHoldAtCourseEnd()) {
+      if (!goal_active_) return;
+      const auto action_state = move_base_.getState();
+      const bool timeout = (ros::Time::now() - goal_sent_time_).toSec() > search_goal_timeout_;
+      if (!action_state.isDone() && !timeout) return;
+      if (timeout) move_base_.cancelGoal();
+      goal_active_ = false;
+      goal_kind_ = GoalKind::NONE;
+      setState(State::OBSERVE, !timeout && action_state == actionlib::SimpleClientGoalState::SUCCEEDED ?
+          "closer observation pose reached; scanning for blue marker" :
+          "closer observation pose unreachable; waiting for blue marker");
+      return;
+    }
     const bool line_fresh = black_line_visible_ &&
         (ros::Time::now() - last_black_line_time_).toSec() <= black_line_timeout_;
     if (line_guidance_enabled_ && line_fresh &&
@@ -1155,6 +1205,8 @@ class BlueGoalNavigator {
     if (state_ == State::WAIT_SYSTEM) {
       if (target_visible_ && target_pose_valid_) {
         setState(State::ACQUIRE, "blue target already visible");
+      } else if (shouldHoldAtCourseEnd()) {
+        setState(State::OBSERVE, "mapped course end reached; scanning for blue marker");
       } else if (line_guidance_enabled_ && black_line_visible_ &&
                  (ros::Time::now() - last_black_line_time_).toSec() <=
                      black_line_timeout_) {
@@ -1191,6 +1243,7 @@ class BlueGoalNavigator {
   ros::Subscriber gimbal_ready_sub_;
   ros::Subscriber gimbal_locked_sub_;
   ros::Subscriber enable_sub_;
+  ros::Subscriber finish_observation_sub_;
   ros::Publisher state_pub_;
   ros::Publisher target_pose_pub_;
   ros::Publisher approach_goal_pub_;
@@ -1285,6 +1338,7 @@ class BlueGoalNavigator {
   std::vector<Point2D> search_waypoints_;
   std::vector<Point2D> course_waypoints_;
   std::size_t course_index_{0};
+  bool finish_observation_attempted_{false};
   bool current_goal_is_course_{false};
   std::size_t search_index_{0};
   Point2D current_approach_goal_;

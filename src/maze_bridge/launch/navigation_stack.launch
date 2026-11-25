@@ -37,6 +37,7 @@
   <arg name="camera_respawn" default="false"/>
   <arg name="camera_frame_id" default="usb_cam"/>
   <arg name="camera_info_url" default=""/>
+  <arg name="lidar_self_echo_config" default=""/>
   <!-- 当 ROS +angular.z 实车却右转时使用 -1；架空车轮验证后再落地。 -->
   <arg name="angular_command_sign" default="-1"/>
   <arg name="safety_enable" default="true"/>
@@ -203,6 +204,8 @@
     <param name="vehicle_half_width" value="$(arg vehicle_half_width)"/>
     <!-- Collision clearance belongs to the safety/planner checks, not this mask. -->
     <param name="padding" value="0.0"/>
+    <rosparam if="$(eval arg('lidar_self_echo_config') != '')"
+              command="load" file="$(arg lidar_self_echo_config)"/>
   </node>
 
   <!-- 摄像头 -->

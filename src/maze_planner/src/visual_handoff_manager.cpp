@@ -1,4 +1,5 @@
 #include <ros/ros.h>
+#include <geometry_msgs/PoseStamped.h>
 #include <geometry_msgs/Twist.h>
 #include <sensor_msgs/CameraInfo.h>
 #include <sensor_msgs/JointState.h>
@@ -36,6 +37,8 @@ class VisualHandoffManager {
     pnh_.param<double>("laser_y", corridor_params_.laser_y, 0.0);
     pnh_.param<double>("laser_yaw", corridor_params_.laser_yaw, 0.0);
     pnh_.param<double>("corridor_check_standoff", corridor_params_.check_standoff, .48);
+    pnh_.param<double>("finish_observation_distance", finish_observation_distance_, 0.0);
+    pnh_.param<double>("finish_max_lateral_error", finish_max_lateral_error_, .20);
     pnh_.param<double>("corridor_sample_step", corridor_params_.sample_step, .10);
     pnh_.param<double>("corridor_ray_margin", corridor_params_.ray_margin, .04);
     pnh_.param<double>("turn_check_rate", corridor_params_.turn_rate, .25);
@@ -51,6 +54,8 @@ class VisualHandoffManager {
     footprint_.padding = .03;
 
     command_pub_ = nh_.advertise<geometry_msgs::Twist>("/cmd_vel", 1);
+    finish_observation_pub_ = nh_.advertise<geometry_msgs::PoseStamped>(
+        "/handoff/finish_observation_goal", 1);
     nav_enable_pub_ = nh_.advertise<std_msgs::Bool>("/handoff/nav_enable", 1, true);
     visual_enable_pub_ = nh_.advertise<std_msgs::Bool>("/handoff/visual_enable", 1, true);
     goal_pub_ = nh_.advertise<std_msgs::Bool>("/goal_reached", 1, true);
@@ -95,6 +100,8 @@ class VisualHandoffManager {
   void startNavigation() {
     mode_ = Mode::NAVIGATION;
     clear_scans_ = 0;
+    finish_observation_samples_ = 0;
+    nav_state_.clear();
     checked_scan_stamp_ = ros::Time(0);
     publishStop();
     publishBool(goal_pub_, false);
@@ -184,7 +191,7 @@ class VisualHandoffManager {
            *horizontal_range <= max_target_range_;
   }
 
-  bool corridorReady(std::string* reason) {
+  bool corridorReady(maze_planner::WallObservation* associated_wall, std::string* reason) {
     const ros::Time now = ros::Time::now();
     if (!have_observation_ || (now-observation_received_).toSec() > observation_timeout_ ||
         !have_joint_ || (now-joint_received_).toSec() > joint_timeout_ ||
@@ -230,26 +237,68 @@ class VisualHandoffManager {
       *reason = "camera and lidar target distances differ";
       return false;
     }
+    *associated_wall = wall;
+    const maze_planner::Point2 tangent(-wall.outward.y, wall.outward.x);
+    if (finish_observation_distance_ > corridor_params_.check_standoff &&
+        std::fabs(maze_planner::dot(wall.marker, tangent)) > finish_max_lateral_error_) {
+      *reason = "blue marker approach needs lateral alignment";
+      return false;
+    }
     return maze_planner::handoffCorridorClear(scan_, obstacles, footprint_,
                                                wall.marker.x, wall.marker.y,
                                                corridor_params_, reason);
+  }
+
+  void suggestFinishObservation(const maze_planner::WallObservation& wall) {
+    if (finish_observation_distance_ <= corridor_params_.check_standoff ||
+        nav_state_ != "OBSERVE: mapped course end reached; scanning for blue marker" ||
+        wall.inliers == 0) {
+      finish_observation_samples_ = 0;
+      return;
+    }
+    const auto candidate = maze_planner::parkingPosition(wall, finish_observation_distance_);
+    const double travel = maze_planner::norm(candidate);
+    const double progress = maze_planner::norm(wall.marker) - finish_observation_distance_;
+    if (travel < .20 || travel > 1.25 || progress < .20) {
+      finish_observation_samples_ = 0;
+      return;
+    }
+    if (maze_planner::norm(candidate-last_finish_observation_) > .15)
+      finish_observation_samples_ = 0;
+    last_finish_observation_ = candidate;
+    if (++finish_observation_samples_ < required_clear_scans_) return;
+    finish_observation_samples_ = 0;
+
+    geometry_msgs::PoseStamped goal;
+    goal.header.stamp = ros::Time::now();
+    goal.header.frame_id = "base_footprint";
+    goal.pose.position.x = candidate.x;
+    goal.pose.position.y = candidate.y;
+    const double half_yaw = .5*maze_planner::parkingYaw(wall);
+    goal.pose.orientation.z = std::sin(half_yaw);
+    goal.pose.orientation.w = std::cos(half_yaw);
+    finish_observation_pub_.publish(goal);
   }
 
   void timerCb(const ros::TimerEvent&) {
     if (mode_ != Mode::NAVIGATION) return;
     if (!have_scan_ || (ros::Time::now()-scan_received_).toSec() > scan_timeout_) {
       clear_scans_ = 0;
+      finish_observation_samples_ = 0;
       publishState("NAVIGATION: waiting for lidar");
       return;
     }
     if (scan_.header.stamp == checked_scan_stamp_) return;
     checked_scan_stamp_ = scan_.header.stamp;
     std::string reason;
-    if (!corridorReady(&reason)) {
+    maze_planner::WallObservation wall;
+    if (!corridorReady(&wall, &reason)) {
       clear_scans_ = 0;
       publishState("NAVIGATION: " + reason);
+      suggestFinishObservation(wall);
       return;
     }
+    finish_observation_samples_ = 0;
     if (++clear_scans_ < required_clear_scans_) {
       publishState("NAVIGATION: confirming clear corridor");
       return;
@@ -265,6 +314,7 @@ class VisualHandoffManager {
 
   ros::NodeHandle nh_, pnh_;
   ros::Publisher command_pub_, nav_enable_pub_, visual_enable_pub_, goal_pub_, state_pub_;
+  ros::Publisher finish_observation_pub_;
   ros::Subscriber enable_sub_, nav_cmd_sub_, visual_cmd_sub_, nav_state_sub_, visual_state_sub_;
   ros::Subscriber visual_goal_sub_, observation_sub_, joint_sub_, scan_sub_, camera_sub_;
   ros::Timer timer_;
@@ -278,6 +328,10 @@ class VisualHandoffManager {
   bool auto_start_{false}, have_observation_{false}, have_joint_{false}, have_scan_{false};
   bool have_camera_info_{false};
   int required_clear_scans_{3}, clear_scans_{0};
+  int finish_observation_samples_{0};
+  double finish_observation_distance_{0.0};
+  double finish_max_lateral_error_{.20};
+  maze_planner::Point2 last_finish_observation_;
   double camera_x_{.145}, camera_y_{0.0}, paper_height_{.297}, fallback_hfov_deg_{70.0};
   double max_target_range_{8.0}, range_absolute_tolerance_{.25}, range_relative_tolerance_{.20};
   double scan_timeout_{.5}, observation_timeout_{.5}, joint_timeout_{1.5}, max_sensor_skew_{.5};

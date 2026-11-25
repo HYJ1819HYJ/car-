@@ -8,7 +8,7 @@
 #include <string>
 #include "stm32_bridge/footprint_parameters.hpp"
 
-// Removes lidar returns produced by brackets/chassis inside the robot body.
+// Removes lidar returns produced by the chassis and calibrated on-board parts.
 // GMapping does not know the robot footprint; feeding those returns directly to
 // it permanently paints the robot into the saved static map. The same filtered
 // scan is also used by AMCL and both costmaps.
@@ -25,6 +25,21 @@ public:
     pnh_.param<double>("vehicle_rear_x", vehicle_rear_x_, -0.1517);
     pnh_.param<double>("vehicle_half_width", vehicle_half_width_, 0.24);
     pnh_.param<double>("padding", padding_, 0.02);
+
+    double fixed_echo_bearing_deg = 0.0;
+    const bool have_echo_bearing =
+        pnh_.getParam("fixed_self_echo_bearing_deg", fixed_echo_bearing_deg);
+    const bool have_echo_range = pnh_.getParam("fixed_self_echo_range_m", fixed_echo_range_);
+    if (have_echo_bearing && have_echo_range &&
+        std::fabs(fixed_echo_bearing_deg) > 90.5 && std::fabs(fixed_echo_bearing_deg) <= 180.0 &&
+        std::isfinite(fixed_echo_range_) && fixed_echo_range_ > 0.01) {
+      fixed_echo_bearing_ = fixed_echo_bearing_deg * M_PI / 180.0;
+      fixed_echo_enabled_ = true;
+      ROS_INFO("Calibrated self echo at %.2f degrees, %.3f m",
+               fixed_echo_bearing_deg, fixed_echo_range_);
+    } else if (have_echo_bearing || have_echo_range) {
+      ROS_WARN("Invalid fixed self echo calibration; using the chassis filter only");
+    }
 
     footprint_.front=vehicle_front_x_;
     footprint_.rear=vehicle_rear_x_;
@@ -52,6 +67,14 @@ public:
   }
 
 private:
+  bool matchesFixedSelfEcho(double angle, double range) const {
+    // Match a known part within half a degree and a centimeter in range.
+    return fixed_echo_enabled_ &&
+           std::fabs(std::remainder(angle - fixed_echo_bearing_, 2.0 * M_PI)) <=
+               0.5 * M_PI / 180.0 &&
+           std::fabs(range - fixed_echo_range_) <= 0.01;
+  }
+
   void scanCb(const sensor_msgs::LaserScan::ConstPtr& input) {
     sensor_msgs::LaserScan output = *input;
     sensor_msgs::LaserScan obstacle_output = *input;
@@ -69,7 +92,7 @@ private:
           stm32_bridge::SafetyPoint{x_base,y_base},
           stm32_bridge::SafetyPoint{0.0,0.0},0.0,footprint_);
 
-      if (!inside_robot) continue;
+      if (!inside_robot && !matchesFixedSelfEcho(angle, range)) continue;
       output.ranges[i] = std::numeric_limits<float>::infinity();
       // A chassis return means the ray was occluded, not that all space
       // behind it is free. Costmap inf_is_valid must not clear that shadow.
@@ -85,7 +108,7 @@ private:
     std_msgs::UInt32 count;
     count.data = filtered;
     count_pub_.publish(count);
-    ROS_INFO_THROTTLE(5.0, "Scan self-filter removed %u chassis returns", filtered);
+    ROS_INFO_THROTTLE(5.0, "Scan self-filter removed %u self returns", filtered);
   }
 
   ros::NodeHandle nh_;
@@ -105,6 +128,9 @@ private:
   double vehicle_half_width_{0.24};
   stm32_bridge::SafetyFootprint footprint_;
   double padding_{0.02};
+  bool fixed_echo_enabled_{false};
+  double fixed_echo_bearing_{0.0};
+  double fixed_echo_range_{0.0};
 };
 
 int main(int argc, char** argv) {

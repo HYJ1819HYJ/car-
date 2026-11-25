@@ -13,6 +13,7 @@
   <arg name="gimbal_port" default="/dev/ttyUSB1"/>
   <arg name="camera_device" default="/dev/video4"/>
   <arg name="camera_info_url" default=""/>
+  <arg name="lidar_self_echo_config" default=""/>
   <arg name="max_speed" default="0.10"/>
   <arg name="max_turn" default="0.25"/>
   <arg name="stop_ratio" default="0.16"/>
@@ -23,6 +24,8 @@
   <arg name="range_absolute_tolerance" default="0.25"/>
   <arg name="range_relative_tolerance" default="0.20"/>
   <arg name="corridor_check_standoff" default="0.48"/>
+  <arg name="finish_observation_distance" default="0.90"/>
+  <arg name="finish_max_lateral_error" default="0.20"/>
   <arg name="max_sensor_skew" default="0.5"/>
 
   <!-- Hardware and navigation are started once. The two motion controllers
@@ -38,6 +41,7 @@
     <arg name="camera_device" value="$(arg camera_device)"/>
     <arg name="camera_respawn" value="true"/>
     <arg name="camera_info_url" value="$(arg camera_info_url)"/>
+    <arg name="lidar_self_echo_config" value="$(arg lidar_self_echo_config)"/>
     <arg name="max_v" value="$(arg max_speed)"/>
     <arg name="max_nav_v" value="$(arg max_speed)"/>
     <arg name="max_nav_w" value="$(arg max_turn)"/>
@@ -101,6 +105,8 @@
     <param name="range_absolute_tolerance" value="$(arg range_absolute_tolerance)"/>
     <param name="range_relative_tolerance" value="$(arg range_relative_tolerance)"/>
     <param name="corridor_check_standoff" value="$(arg corridor_check_standoff)"/>
+    <param name="finish_observation_distance" value="$(arg finish_observation_distance)"/>
+    <param name="finish_max_lateral_error" value="$(arg finish_max_lateral_error)"/>
     <param name="max_sensor_skew" value="$(arg max_sensor_skew)"/>
   </node>
 </launch>

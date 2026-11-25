@@ -32,6 +32,7 @@ rospy.set_param('/handoff_direct_visual/auto_start',False)
 rospy.set_param('/handoff_direct_visual/require_gimbal',True)
 rospy.set_param('/visual_handoff_manager/auto_start',True)
 rospy.set_param('/visual_handoff_manager/required_clear_scans',3)
+rospy.set_param('/visual_handoff_manager/finish_observation_distance',.90)
 goals, preempted, commands, states, nav_states, reached = [], [], [], [], [], []
 
 def execute(goal):
@@ -66,7 +67,12 @@ connected.publish(True); ready.publish(True); locked.publish(True)
 grid=OccupancyGrid(); grid.header.frame_id='map'; grid.info.resolution=.025
 grid.info.width=160; grid.info.height=120; grid.info.origin.position.x=-1.0
 grid.info.origin.position.y=-1.5; grid.info.origin.orientation.w=1
-grid.data=[100 if -1+(i%160+.5)*.025 >= 2 else 0 for i in range(grid.info.width*grid.info.height)]
+grid.data = []
+for i in range(grid.info.width*grid.info.height):
+    x = grid.info.origin.position.x + (i%160+.5)*.025
+    y = grid.info.origin.position.y + (i//160+.5)*.025
+    blocks_close_poses = hold_test and abs(x-1.3125)<.02 and abs(y-.45)<.05
+    grid.data.append(100 if x >= 2 or blocks_close_poses else 0)
 map_pub.publish(grid)
 tf_pub=tf2_ros.TransformBroadcaster()
 static=tf2_ros.StaticTransformBroadcaster()
@@ -84,7 +90,7 @@ commands_to_run=[
  ['rosrun','maze_planner','visual_handoff_manager','__name:=visual_handoff_manager']]
 children=[subprocess.Popen(cmd) for cmd in commands_to_run]
 
-def phase(detected, obstacle=False, area=.02, duration=1.8):
+def phase(detected, obstacle=False, area=.02, duration=1.8, camera=True, marker_y=0.0):
     start=time.monotonic(); rate=rospy.Rate(20)
     while time.monotonic()-start < duration and not rospy.is_shutdown():
         stamp=rospy.Time.now()
@@ -102,19 +108,32 @@ def phase(detected, obstacle=False, area=.02, duration=1.8):
             for i in range(beam-4,beam+5): scan.ranges[i]=math.hypot(1-.315,.15)
         scan_pub.publish(scan)
         joint=JointState(); joint.header.stamp=stamp
-        joint.name=['camera_pan_joint','camera_tilt_joint']; joint.position=[0.,0.]
+        joint.name=['camera_pan_joint','camera_tilt_joint']
+        joint.position=[math.atan2(marker_y,2-.145),0.]
         joint_pub.publish(joint)
         obs=BlueTargetObservation(); obs.header.stamp=stamp; obs.detected=detected
         obs.image_width,obs.image_height=640,480; obs.center_x,obs.center_y=320,240
-        obs.pixel_height=640/(2*math.tan(math.radians(35)))*.297/(2-.145)
-        obs.pixel_width=.7*obs.pixel_height; obs.contour_ratio=area; obs_pub.publish(obs)
+        obs.pixel_height=640/(2*math.tan(math.radians(35)))*.297/math.hypot(2-.145,marker_y)
+        obs.pixel_width=.7*obs.pixel_height; obs.contour_ratio=area
+        if camera:
+            obs_pub.publish(obs)
         nav=Twist(); nav.linear.x=.071; nav.angular.z=.11; fake_nav.publish(nav)
         rate.sleep()
     return start,time.monotonic()
 
 try:
     if hold_test:
-        phase(False,duration=7.0)
+        phase(False,duration=4.0)
+        assert any('mapped course end reached' in state for state in nav_states), \
+            'Navigator did not reach the final waypoint before camera interruption'
+        phase(False,duration=1.6,camera=False)
+        assert any('waiting for camera/blue detector' in state for state in nav_states), \
+            'The camera interruption did not put the navigator into WAIT_SYSTEM'
+        phase(False,duration=2.0)
+        assert len(goals) == 2, 'Navigator sent an unrelated goal after the mapped course'
+        assert 'mapped course end reached' in nav_states[-1], \
+            'Navigator did not resume waiting at the final waypoint after camera recovery'
+        phase(True, duration=3.0, marker_y=.45)
     else:
         search=phase(False,duration=2.3)
         blocked=phase(True,obstacle=True,duration=2.1)
@@ -137,10 +156,17 @@ for (_, goal), expected in zip(goals[:2], ((.8, 0.0), (1.5, -.4))):
     assert abs(p.x - expected[0]) < 1e-6 and abs(p.y - expected[1]) < 1e-6, \
         'Mapped course was not followed in order'
 if hold_test:
-    assert len(goals) == 2, 'Navigator sent an unrelated goal after the mapped course'
-    assert any('mapped course end reached' in state for state in nav_states), \
-        'Navigator did not wait at the finish area while scanning'
-    print('PASS: final mapped waypoint holds position for visual search')
+    assert len(goals) == 3, 'Expected one closer observation goal after the mapped course'
+    finish_pose = goals[-1][1].target_pose.pose.position
+    assert abs(finish_pose.x - .90) < .05 and abs(finish_pose.y - .45) < .05, \
+        'Navigation did not pick the first aligned pose with enough map clearance'
+    assert 'closer observation pose reached' in nav_states[-1], \
+        'Navigator did not settle at the closer observation pose'
+    assert not any(s.startswith('VISUAL:') for _, s in states), \
+        'Visual tracking took control before aligning to the marker'
+    assert any('needs lateral alignment' in s for _, s in states), \
+        'The offset marker did not require lateral alignment'
+    print('PASS: waits through camera recovery and tries one closer observation with navigation')
     rospy.signal_shutdown('course end mock complete')
     raise SystemExit(0)
 assert not any(t < clear[0] for t in preempted), \
