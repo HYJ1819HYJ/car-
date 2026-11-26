@@ -136,6 +136,49 @@ TEST(FootprintSearch,BlockedStartAndInvalidBudgetAreRejected) {
   EXPECT_TRUE(out.empty());
 }
 
+TEST(FootprintSearch, SemiEnclosedCornerEscapesWithBoundedReverse) {
+  auto map = freeMap();
+  for (unsigned int y = 0; y < map.getSizeInCellsY(); ++y)
+    for (unsigned int x = 0; x < map.getSizeInCellsX(); ++x) {
+      double wx, wy;
+      map.mapToWorld(x,y,wx,wy);
+      if (wx > .375 || (wx > .10 && std::abs(wy) > .275))
+        map.setCost(x,y,costmap_2d::LETHAL_OBSTACLE);
+    }
+  const Pose start{0,0,0}, goal{-1,0,M_PI};
+  const auto outline = body();
+  Config cfg;
+  std::vector<Pose> out;
+  ASSERT_TRUE(poseFree(start,map,outline,cfg.collision_padding));
+  ASSERT_FALSE(pathFree({start,{0,0,M_PI/4}},map,outline,cfg.collision_padding));
+  EXPECT_FALSE(footprintReplan(start,goal,map,outline,cfg,out));
+  cfg.allow_reverse = true;
+  ASSERT_TRUE(footprintReplan(start,goal,map,outline,cfg,out));
+  EXPECT_TRUE(pathFree(out,map,outline,cfg.collision_padding));
+  double reverse = 0.0, longest = 0.0;
+  for (std::size_t i = 1; i < out.size(); ++i) {
+    const auto& a = out[i-1];
+    const auto& b = out[i];
+    const double projection = (b.x-a.x)*std::cos(a.yaw) + (b.y-a.y)*std::sin(a.yaw);
+    if (projection > 1e-6) reverse = 0.0;
+    if (projection < -1e-6) reverse += std::hypot(b.x-a.x,b.y-a.y);
+    longest = std::max(longest,reverse);
+  }
+  EXPECT_NEAR(longest,.25,.055);
+  EXPECT_LE(longest,.40+1e-6);
+  for (const unsigned char blocked : {costmap_2d::NO_INFORMATION,costmap_2d::LETHAL_OBSTACLE}) {
+    auto blocked_map = map;
+    unsigned int x, y;
+    ASSERT_TRUE(blocked_map.worldToMap(-.325,0,x,y));
+    for (unsigned int j = 0; j < map.getSizeInCellsY(); ++j) blocked_map.setCost(x,j,blocked);
+    EXPECT_FALSE(footprintReplan(start,goal,blocked_map,outline,cfg,out));
+  }
+  auto open = freeMap();
+  ASSERT_TRUE(footprintReplan(start,{1,0,0},open,outline,cfg,out));
+  for (std::size_t i = 1; i < out.size(); ++i)
+    EXPECT_GE(out[i].x,out[i-1].x-1e-6);
+}
+
 namespace {
 
 // attempt-02/navigation_0.bag. Each fixture stores the latest preceding
@@ -177,6 +220,76 @@ bool loadMockSnapshot(const std::string& name, nav_msgs::OccupancyGrid* grid,
 }
 
 }  // namespace
+
+TEST(FootprintSearch, StartPaddingGrazeEscapesWithoutPhysicalCollision) {
+  // attempt-04 at t=105 s. Crop the t=104.637 s costmap to 1.8 m
+  // around the localized start, retaining lethal and unknown cells.
+  nav_msgs::OccupancyGrid occupancy;
+  costmap_2d::Costmap2D map;
+  std::vector<geometry_msgs::Point> outline;
+  std::vector<Pose> recorded, out;
+  ASSERT_TRUE(loadMockSnapshot("mock1126_attempt04_t105", &occupancy, &map, &outline, &recorded));
+  ASSERT_EQ(recorded.size(),2u);
+  const Pose start = recorded.front(), goal = recorded.back();
+  Config cfg;
+  cfg.allow_reverse = true;
+  ASSERT_TRUE(poseFree(start,map,outline,0.0));
+  ASSERT_EQ(collisionCells(start,map,outline,cfg.collision_padding),9);
+  cfg.allow_start_padding_escape = false;
+  EXPECT_FALSE(footprintReplan(start,goal,map,outline,cfg,out));
+  cfg.allow_start_padding_escape = true;
+  ASSERT_TRUE(footprintReplan(start,goal,map,outline,cfg,out));
+  ASSERT_GE(out.size(),3u);
+  EXPECT_DOUBLE_EQ(out.front().x,start.x);
+  EXPECT_TRUE(pathFree({out.front(),out[1]},map,outline,0.0));
+  const std::vector<Pose> tail(out.begin()+1,out.end());
+  EXPECT_TRUE(pathFree(tail,map,outline,cfg.collision_padding));
+  unsigned int x, y;
+  ASSERT_TRUE(map.worldToMap(start.x,start.y,x,y));
+  map.setCost(x,y,costmap_2d::LETHAL_OBSTACLE);
+  EXPECT_FALSE(poseFree(start,map,outline,0.0));
+  EXPECT_FALSE(footprintReplan(start,goal,map,outline,cfg,out));
+  EXPECT_TRUE(out.empty());
+}
+
+TEST(Collision, LocalReverseEscapeMatchesStartPaddingGrazeOnRecordedAttempt04) {
+  nav_msgs::OccupancyGrid occupancy;
+  costmap_2d::Costmap2D map;
+  std::vector<geometry_msgs::Point> outline;
+  std::vector<Pose> recorded;
+  ASSERT_TRUE(loadMockSnapshot("mock1126_attempt04_t105", &occupancy, &map, &outline, &recorded));
+  const Pose start = recorded.front();
+  ASSERT_TRUE(poseFree(start, map, outline, 0.0));
+  ASSERT_EQ(collisionCells(start, map, outline, 0.02), 9);
+
+  // Backing straight out by 0.09 m (v=-0.15 m/s over 0.60 s) clears the grazed
+  // 2 cm padding band without ever touching an obstacle with the unpadded body.
+  std::vector<Pose> reverse_arc{start};
+  for (int i = 1; i <= 12; ++i) {
+    const double t = 0.60 * i / 12.0;
+    const double ds = -0.15 * t;
+    reverse_arc.push_back({start.x + ds * std::cos(start.yaw),
+                           start.y + ds * std::sin(start.yaw), start.yaw});
+  }
+  EXPECT_FALSE(pathFree(reverse_arc, map, outline, 0.02));
+  EXPECT_TRUE(pathFreeOrPaddingEscape(reverse_arc, map, outline, 0.02));
+
+  // Driving forward into the wall increases padded hits and must be rejected.
+  const Pose forward_deeper{start.x + 0.06 * std::cos(start.yaw),
+                            start.y + 0.06 * std::sin(start.yaw), start.yaw};
+  EXPECT_FALSE(pathFreeOrPaddingEscape({start, forward_deeper}, map, outline, 0.02));
+
+  // Once the start is free at full padding, entering the padding band is rejected.
+  const Pose clear_start = reverse_arc.back();
+  ASSERT_TRUE(poseFree(clear_start, map, outline, 0.02));
+  EXPECT_FALSE(pathFreeOrPaddingEscape({clear_start, start}, map, outline, 0.02));
+
+  // If the unpadded body itself collides, escape must be rejected.
+  unsigned int x, y;
+  ASSERT_TRUE(map.worldToMap(start.x, start.y, x, y));
+  map.setCost(x, y, costmap_2d::LETHAL_OBSTACLE);
+  EXPECT_FALSE(pathFreeOrPaddingEscape(reverse_arc, map, outline, 0.02));
+}
 
 TEST(Collision, CorridorEntranceAgreesWithPlannerOnRecordedGoal9) {
   nav_msgs::OccupancyGrid occupancy;
@@ -226,6 +339,9 @@ TEST(FootprintSearch, MockRaceNarrowPassageSnapshotsRespectPlanningBudget) {
     const double ms = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - start).count();
     std::cout << name << ": " << ms << " ms, path_found=" << found << '\n';
+    if (std::string(name) == "mock1126_t100") {
+      EXPECT_TRUE(found);
+    }
     if (found) {
       EXPECT_LT(ms, 150.0);
       EXPECT_TRUE(pathFree(out, map, footprint, config.collision_padding));

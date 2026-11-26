@@ -16,6 +16,8 @@
   <arg name="mode" default="navigation"/>   <!-- explore 或 navigation -->
   <arg name="smooth_global_plan" default="true"/>
   <arg name="forward_only_local_planner" default="true"/>
+  <arg name="navigation_allow_reverse" default="false"/>
+  <arg name="allow_controlled_reverse" default="$(arg navigation_allow_reverse)"/>
   <arg name="navigation_cmd_vel_topic" default="/cmd_vel"/>
   <!-- 旧地图生成于雷达时间戳修复之前，必须重建 v2 地图。 -->
   <arg name="map_file" default="$(find maze_bridge)/../../maps/competition_map_v3.yaml"/>
@@ -41,6 +43,7 @@
   <!-- 当 ROS +angular.z 实车却右转时使用 -1；架空车轮验证后再落地。 -->
   <arg name="angular_command_sign" default="-1"/>
   <arg name="safety_enable" default="true"/>
+  <arg name="controlled_reverse_enabled" value="$(eval arg('mode') == 'navigation' and arg('navigation_allow_reverse') and arg('allow_controlled_reverse') and arg('forward_only_local_planner') and arg('safety_enable'))"/>
   <!-- 前进在车头外8cm停车，30cm内保比例减速；整车扫掠另行检查。 -->
   <arg name="safety_stop_distance" default="0.08"/>
   <arg name="safety_slow_distance" default="0.30"/>
@@ -83,6 +86,11 @@
   <arg name="gimbal_pan_to_ros_sign" default="-1.0"/>
   <arg name="gimbal_invert_target_x" default="true"/>
   <arg name="gimbal_tilt_to_ros_sign" default="-1.0"/>
+  <!-- 舵机俯仰约定：0° 水平，负值为俯头，正值为仰头。默认限制在 [-25°, 0°]，初始俯头 -10°。 -->
+  <arg name="gimbal_tilt_min_deg" default="-25.0"/>
+  <arg name="gimbal_tilt_max_deg" default="0.0"/>
+  <arg name="gimbal_default_tilt_deg" default="-10.0"/>
+  <arg name="gimbal_min_target_down_deg" default="-4.0"/>
 
   <!-- 普通导航默认不启用自主找蓝纸，避免一启动 launch 就自行运动。
        enable_blue_autonomy=true 只启动状态机；auto_start=false 时仍需向
@@ -100,6 +108,10 @@
   <arg name="initial_pose_a" default="0.0"/>
   <arg name="paper_height" default="0.297"/>
   <arg name="fallback_hfov_deg" default="70.0"/>
+  <arg name="gimbal_yaw_feedforward_sec" default="0.12"/>
+  <arg name="gimbal_max_yaw_feedforward_px" default="120.0"/>
+  <arg name="gimbal_avoid_status_tx_window" default="true"/>
+  <arg name="gimbal_status_period_est_sec" default="0.516"/>
   <!-- 远距离蓝色 A4 检测：同时要求连续色块尺寸、A4近似长宽比和填充率。 -->
   <arg name="blue_ratio_threshold" default="0.0003"/>
   <arg name="blue_contour_ratio" default="0.00025"/>
@@ -171,7 +183,8 @@
     <param name="safety_prediction_time" value="$(arg safety_prediction_time)"/>
     <param name="safety_prediction_step" value="0.03"/>
     <param name="safety_collision_padding" value="$(arg safety_collision_padding)"/>
-    <param name="navigation_allow_reverse" value="false"/>
+    <param name="navigation_allow_reverse" value="$(arg controlled_reverse_enabled)"/>
+    <param name="navigation_reverse_max_speed" value="0.15"/>
     <param name="joystick_reverse_max_speed" value="0.15"/>
     <param name="vehicle_front_x" value="$(arg vehicle_front_x)"/>
     <param name="vehicle_rear_x" value="$(arg vehicle_rear_x)"/>
@@ -284,6 +297,15 @@
     <param name="pan_to_ros_sign" value="$(arg gimbal_pan_to_ros_sign)"/>
     <param name="invert_target_x" value="$(arg gimbal_invert_target_x)"/>
     <param name="tilt_to_ros_sign" value="$(arg gimbal_tilt_to_ros_sign)"/>
+    <param name="tilt_min_deg" value="$(arg gimbal_tilt_min_deg)"/>
+    <param name="tilt_max_deg" value="$(arg gimbal_tilt_max_deg)"/>
+    <param name="default_tilt_deg" value="$(arg gimbal_default_tilt_deg)"/>
+    <param name="min_target_down_deg" value="$(arg gimbal_min_target_down_deg)"/>
+    <param name="fallback_hfov_deg" value="$(arg fallback_hfov_deg)"/>
+    <param name="yaw_feedforward_sec" value="$(arg gimbal_yaw_feedforward_sec)"/>
+    <param name="max_yaw_feedforward_px" value="$(arg gimbal_max_yaw_feedforward_px)"/>
+    <param name="avoid_status_tx_window" value="$(arg gimbal_avoid_status_tx_window)"/>
+    <param name="status_period_est_sec" value="$(arg gimbal_status_period_est_sec)"/>
   </node>
 
   <!-- ============ 3. 建图与导航层 ============ -->
@@ -375,7 +397,7 @@
       <param name="make_plan_clear_costmap" value="false"/>
       <param name="make_plan_add_unreachable_goal" value="false"/>
       <!-- 按5Hz请求重算全局参考；实际响应还受计算和调度耗时影响。 -->
-      <param name="controller_frequency" value="12.0"/>
+      <param name="controller_frequency" value="10.0"/>
       <param name="planner_frequency" value="2.0"/>
       <!-- 动态障碍和紧凑弯口允许短时等待/重优化，不再5秒就永久放弃目标。 -->
       <param name="controller_patience" value="15.0"/>
@@ -409,6 +431,26 @@
       <rosparam if="$(arg corner_clearance)" file="$(find maze_bridge)/launch/corner_clearance_costmap_params.yaml" command="load"/>
       <rosparam file="$(find maze_bridge)/launch/teb_local_planner_params_v2.yaml" command="load"/>
       <rosparam if="$(arg smooth_global_plan)" file="$(find maze_bridge)/launch/smooth_teb_params.yaml" command="load"/>
+      <param if="$(arg smooth_global_plan)" name="SmoothGlobalPlanner/allow_reverse" value="$(arg controlled_reverse_enabled)"/>
+      <param name="ForwardTebLocalPlanner/allow_controlled_reverse" value="$(arg controlled_reverse_enabled)"/>
+      <param name="ForwardTebLocalPlanner/max_reverse_speed" value="0.15"/>
+      <param name="ForwardTebLocalPlanner/max_continuous_reverse_dist" value="0.40"/>
+      <param name="ForwardTebLocalPlanner/reverse_check_horizon" value="0.60"/>
+      <param name="ForwardTebLocalPlanner/reverse_collision_padding" value="0.02"/>
+      <param unless="$(arg controlled_reverse_enabled)" name="TebLocalPlannerROS/allow_init_with_backwards_motion" value="false"/>
+      <param unless="$(arg controlled_reverse_enabled)" name="TebLocalPlannerROS/max_vel_x_backwards" value="0.01"/>
+      <param unless="$(arg controlled_reverse_enabled)" name="TebLocalPlannerROS/weight_kinematics_forward_drive" value="1000.0"/>
+      <!-- Keep genuinely unobserved cells unknown during reverse. The saved map
+           supplies known space under the chassis and in the lidar blind sector. -->
+      <param if="$(arg controlled_reverse_enabled)" name="local_costmap/track_unknown_space" value="true"/>
+      <param if="$(arg controlled_reverse_enabled)" name="local_costmap/obstacle_layer/footprint_clearing_enabled" value="false"/>
+      <param if="$(arg controlled_reverse_enabled)" name="global_costmap/track_unknown_space" value="true"/>
+      <param if="$(arg controlled_reverse_enabled)" name="global_costmap/obstacle_layer/footprint_clearing_enabled" value="false"/>
+      <rosparam if="$(arg controlled_reverse_enabled)" param="local_costmap/plugins">
+        - {name: static_layer, type: "costmap_2d::StaticLayer"}
+        - {name: obstacle_layer, type: "costmap_2d::ObstacleLayer"}
+        - {name: inflation_layer, type: "costmap_2d::InflationLayer"}
+      </rosparam>
       <!-- A lower planner limit can be set without changing the bridge limit. -->
       <param name="TebLocalPlannerROS/max_vel_x" value="$(eval min(float(arg('max_nav_v')), float(arg('max_v'))))"/>
       <param name="TebLocalPlannerROS/max_vel_theta" value="$(eval min(float(arg('max_nav_w')), float(arg('max_w'))))"/>

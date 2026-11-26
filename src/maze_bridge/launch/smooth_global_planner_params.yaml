@@ -11,5 +11,8 @@ SmoothGlobalPlanner:
   max_lateral_adjustment: 0.22
   goal_tangent_length: 0.30
   # If local curve repair fails, search a different whole-footprint route.
-  # Every forward/rotation edge and the complete result remain collision checked.
-  replan_compute_ms: 120.0
+  replan_compute_ms: 200.0
+  allow_reverse: true
+  max_reverse_distance: 0.40
+  reverse_cost_multiplier: 4.0
+  allow_start_padding_escape: true

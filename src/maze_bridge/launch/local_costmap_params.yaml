@@ -4,8 +4,7 @@ local_costmap:
   global_frame: odom
   robot_base_frame: base_footprint
   transform_tolerance: 0.3
-  # 局部避障与约14Hz雷达频率匹配，减少拐角动态障碍响应延迟。
-  update_frequency: 12.0
+  update_frequency: 10.0
   publish_frequency: 6.0
   width: 4.0
   height: 4.0

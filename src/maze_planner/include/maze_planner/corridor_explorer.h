@@ -229,11 +229,48 @@ class CorridorExplorer {
   std::vector<Point2> visited_, track_;
 };
 
+inline std::vector<bool> reachableMask(const CorridorGrid& grid, const Point2& robot) {
+  if (!grid.valid()) return {};
+  std::vector<bool> visited(grid.cost.size(), false);
+  const int start = grid.cell(robot);
+  if (grid.lethal(start)) return visited;
+  std::queue<int> pending;
+  const auto enqueue = [&](int i) {
+    if (grid.lethal(i) || grid.cost[i] >= 99 || visited[i]) return;
+    visited[i] = true;
+    pending.push(i);
+  };
+  if (grid.cost[start] == 99) {
+    for (int dy = -1; dy <= 1; ++dy)
+      for (int dx = -1; dx <= 1; ++dx)
+        enqueue(grid.index(start % grid.width + dx, start / grid.width + dy));
+  } else {
+    enqueue(start);
+  }
+  while (!pending.empty()) {
+    const int i = pending.front();
+    pending.pop();
+    const int x = i % grid.width, y = i / grid.width;
+    enqueue(grid.index(x-1, y));
+    enqueue(grid.index(x+1, y));
+    enqueue(grid.index(x, y-1));
+    enqueue(grid.index(x, y+1));
+  }
+  return visited;
+}
+
 inline bool selectFinishEntrance(const CorridorGrid& grid, const WallObservation& wall,
                                  const std::vector<Point2>& footprint,
                                  const std::vector<Point2>& failed, Point2* goal,
                                  double padding = 0.0, const Point2* robot = nullptr,
-                                 double robot_yaw = 0.0, bool alternate_view = false) {
+                                 double robot_yaw = 0.0, bool alternate_view = false,
+                                 const nav_msgs::OccupancyGrid* static_map = nullptr,
+                                 bool require_reachable = false) {
+  if (!grid.valid()) return false;
+  const bool check_reachable = require_reachable && robot;
+  const auto reachable = check_reachable ? reachableMask(grid, *robot) : std::vector<bool>();
+  const CorridorGrid static_grid(static_map ? *static_map : nav_msgs::OccupancyGrid());
+  if (static_map && !static_grid.valid()) return false;
   const Point2 tangent(-wall.outward.y, wall.outward.x);
   const double yaw = parkingYaw(wall);
   const std::array<double, 5> depths = alternate_view
@@ -242,6 +279,14 @@ inline bool selectFinishEntrance(const CorridorGrid& grid, const WallObservation
   for (double depth : depths) {
     for (double side : {0.0, -.12, .12, -.25, .25}) {
       const auto p = parkingPosition(wall, depth) + side * tangent;
+      if (static_map) {
+        const int i = static_grid.cell(p);
+        if (i < 0 || static_grid.cost[i] != 0) continue;
+      }
+      if (check_reachable) {
+        const int i = grid.cell(p);
+        if (i < 0 || !reachable[i]) continue;
+      }
       if (std::any_of(failed.begin(), failed.end(),
                       [&](const Point2& other) { return norm(p - other) < .09; }))
         continue;

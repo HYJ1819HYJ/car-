@@ -1,6 +1,7 @@
 #include <ros/ros.h>
 
 #include <sensor_msgs/JointState.h>
+#include <nav_msgs/Odometry.h>
 #include <serial/serial.h>
 #include <std_msgs/Bool.h>
 #include <std_msgs/String.h>
@@ -15,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -64,13 +66,30 @@ class GimbalBridgeNode {
     pnh_.param("require_status_checksum", require_checksum, false);
     status_parser_ = stm32_bridge::GimbalStatusParser(require_checksum);
 
+    stm32_bridge::GimbalTiltConfig tilt_cfg;
+    pnh_.param<double>("tilt_min_deg", tilt_cfg.min_tilt_deg, -25.0);
+    pnh_.param<double>("tilt_max_deg", tilt_cfg.max_tilt_deg, 0.0);
+    pnh_.param<double>("default_tilt_deg", tilt_cfg.default_tilt_deg, -10.0);
+    pnh_.param<double>("min_target_down_deg", tilt_cfg.min_target_down_deg, -4.0);
+    pnh_.param<double>("fallback_hfov_deg", fallback_hfov_deg_, 88.0);
+    pnh_.param("yaw_feedforward_sec", yaw_feedforward_sec_, .12);
+    pnh_.param("max_yaw_feedforward_px", max_yaw_feedforward_px_, 120.0);
+    pnh_.param("avoid_status_tx_window", avoid_status_tx_window_, true);
+    pnh_.param("status_period_est_sec", status_period_est_sec_, .516);
+    yaw_feedforward_sec_ = std::max(0.0, yaw_feedforward_sec_);
+    max_yaw_feedforward_px_ = std::max(0.0, max_yaw_feedforward_px_);
+    status_period_est_sec_ = std::max(.05, status_period_est_sec_);
+    tilt_controller_.configure(tilt_cfg);
+
     if (send_rate_ < 1.0) send_rate_ = 1.0;
     if (reconnect_period_ < 0.2) reconnect_period_ = 0.2;
+    fallback_hfov_deg_ = std::max(20.0, std::min(150.0, fallback_hfov_deg_));
     pan_to_ros_sign_ = pan_to_ros_sign_ < 0.0 ? -1.0 : 1.0;
     tilt_to_ros_sign_ = tilt_to_ros_sign_ < 0.0 ? -1.0 : 1.0;
 
     observation_sub_ = nh_.subscribe("/blue_target/observation", 5,
                                      &GimbalBridgeNode::observationCb, this);
+    odom_sub_ = nh_.subscribe("/odom", 1, &GimbalBridgeNode::odomCb, this);
     connected_pub_ = nh_.advertise<std_msgs::Bool>("/gimbal/connected", 1, true);
     ready_pub_ = nh_.advertise<std_msgs::Bool>("/gimbal/servo_ready", 1, true);
     enabled_pub_ = nh_.advertise<std_msgs::Bool>("/gimbal/enabled", 1, true);
@@ -83,8 +102,12 @@ class GimbalBridgeNode {
 
     timer_ = nh_.createTimer(ros::Duration(0.02), &GimbalBridgeNode::timerCb, this);
     publishFlags();
-    ROS_INFO("Gimbal bridge: %s @ %d, required=%s", port_.c_str(), baud_,
-             required_ ? "true" : "false");
+    ROS_INFO("Gimbal bridge: %s @ %d, required=%s, tilt=[%.1f, %.1f] deg, default=%.1f deg, min_down=%.1f deg",
+             port_.c_str(), baud_, required_ ? "true" : "false",
+             tilt_controller_.config().min_tilt_deg,
+             tilt_controller_.config().max_tilt_deg,
+             tilt_controller_.config().default_tilt_deg,
+             tilt_controller_.config().min_target_down_deg);
   }
 
   ~GimbalBridgeNode() {
@@ -112,7 +135,10 @@ class GimbalBridgeNode {
       serial_.flush();
       connected_ = true;
       startup_.reset(center_on_connect_);
+      tilt_controller_.reset();
+      if (center_on_connect_) tilt_controller_.requestLevel();
       last_status_time_ = now;
+      have_status_ = false;
       rx_line_.clear();
       rx_overflow_ = false;
       ROS_INFO("Gimbal serial connected: %s", port_.c_str());
@@ -153,15 +179,20 @@ class GimbalBridgeNode {
   }
 
   void autonomyCb(const std_msgs::Bool::ConstPtr& msg) {
-    if (autonomy_enabled_ && !msg->data && connected_ && servo_ready_)
+    if (autonomy_enabled_ && !msg->data && connected_ && servo_ready_) {
       startup_.requestCenter();
+      tilt_controller_.requestLevel();
+    }
     autonomy_enabled_ = msg->data;
   }
 
   bool centerCb(std_srvs::Trigger::Request&, std_srvs::Trigger::Response& reply) {
     reply.success = connected_ && servo_ready_ && !autonomy_enabled_;
-    if (reply.success) startup_.requestCenter();
-    reply.message = reply.success ? "Gimbal center queued" :
+    if (reply.success) {
+      startup_.requestCenter();
+      tilt_controller_.requestLevel();
+    }
+    reply.message = reply.success ? "Gimbal center and pitch level queued" :
         "Gimbal must be online, ready and in standby";
     return true;
   }
@@ -188,32 +219,58 @@ class GimbalBridgeNode {
     observation_time_ = ros::Time::now();
   }
 
+  void odomCb(const nav_msgs::Odometry::ConstPtr& msg) {
+    const double wz = msg->twist.twist.angular.z;
+    odom_wz_ = std::isfinite(wz) ? wz : 0.0;
+    last_odom_time_ = ros::Time::now();
+  }
+
   void transmitObservation() {
     if (!serial_.isOpen()) return;
     const ros::Time now = ros::Time::now();
     if ((now - last_target_send_).toSec() < 1.0 / send_rate_) return;
+    const double since_stat = (now - last_status_time_).toSec();
+    if (avoid_status_tx_window_ && have_status_ &&
+        std::abs(since_stat - status_period_est_sec_) <= .025) return;
     last_target_send_ = now;
 
     const bool fresh = have_observation_ &&
         (now - observation_time_).toSec() <= 0.30;
-    if (!fresh || !latest_observation_.detected ||
-        latest_observation_.image_width == 0 || latest_observation_.image_height == 0 ||
-        latest_observation_.pixel_width < 1.0f || latest_observation_.pixel_height < 1.0f) {
-      sendTarget(false, 0, 0);
-      return;
+    const bool has_observation = fresh && latest_observation_.detected &&
+        latest_observation_.image_width > 0 && latest_observation_.image_height > 0 &&
+        latest_observation_.pixel_width >= 1.0f && latest_observation_.pixel_height >= 1.0f;
+
+    double scaled_x = 320.0;
+    double scaled_y = 240.0;
+    double target_down_deg = std::numeric_limits<double>::quiet_NaN();
+    if (has_observation) {
+      const double hfov_rad = degToRad(fallback_hfov_deg_);
+      const double focal_px = latest_observation_.image_width / (2.0 * std::tan(0.5 * hfov_rad));
+      const double odom_age = (now - last_odom_time_).toSec();
+      const double wz = !last_odom_time_.isZero() && odom_age >= 0.0 && odom_age <= .30
+          ? odom_wz_ : 0.0;
+      double source_x = stm32_bridge::applyYawFeedforwardPx(
+          latest_observation_.center_x, focal_px, wz, yaw_feedforward_sec_,
+          max_yaw_feedforward_px_, latest_observation_.image_width);
+      if (invert_target_x_) {
+        source_x = static_cast<double>(latest_observation_.image_width - 1U) - source_x;
+      }
+      scaled_x = source_x * kFirmwareWidth / latest_observation_.image_width;
+      scaled_y = latest_observation_.center_y * kFirmwareHeight /
+                 latest_observation_.image_height;
+
+      const double cy = 0.5 * latest_observation_.image_height;
+      const double pixel_down_deg =
+          std::atan2(latest_observation_.center_y - cy, focal_px) * 180.0 / M_PI;
+      const double camera_down_deg =
+          tilt_to_ros_sign_ * tilt_deg_ + camera_pitch_offset_ * 180.0 / M_PI;
+      target_down_deg = camera_down_deg + pixel_down_deg;
     }
 
-    double source_x = latest_observation_.center_x;
-    if (invert_target_x_) {
-      source_x = static_cast<double>(latest_observation_.image_width - 1U) - source_x;
-    }
-    const double scaled_x = source_x * kFirmwareWidth /
-                            latest_observation_.image_width;
-    const double scaled_y = latest_observation_.center_y * kFirmwareHeight /
-                            latest_observation_.image_height;
-    const uint16_t x = static_cast<uint16_t>(std::max(0.0, std::min(639.0, scaled_x)));
-    const uint16_t y = static_cast<uint16_t>(std::max(0.0, std::min(479.0, scaled_y)));
-    sendTarget(true, x, y);
+    const auto cmd = tilt_controller_.compute(
+        now.toSec(), gimbal_enabled_, servo_ready_, tilt_deg_,
+        has_observation, scaled_x, scaled_y, target_down_deg, autonomy_enabled_);
+    sendTarget(cmd.found, cmd.x, cmd.y);
   }
 
   void readSerial() {
@@ -261,7 +318,9 @@ class GimbalBridgeNode {
       searching_ = status.searching;
       pan_deg_ = status.pan_deg;
       tilt_deg_ = status.tilt_deg;
+      tilt_controller_.onStatus(tilt_deg_);
       last_status_time_ = ros::Time::now();
+      have_status_ = true;
       publishFlags();
       publishJointState();
     } else {
@@ -333,11 +392,13 @@ class GimbalBridgeNode {
         publishFlags();
       }
       const auto action = startup_.next(now.toSec(), servo_ready_, auto_enable_,
-                                        gimbal_enabled_, tilt_deg_);
+                                        gimbal_enabled_, tilt_deg_,
+                                        tilt_controller_.config().default_tilt_deg);
       using Action = stm32_bridge::GimbalStartup::Action;
       if (action == Action::Center || action == Action::Enable) {
         if (auto_enable_ && !gimbal_enabled_)
           ROS_WARN_THROTTLE(2.0, "Gimbal mode=0 with auto-enable; restoring tracking");
+        if (action == Action::Center) tilt_controller_.requestLevel();
         sendCommand(action == Action::Center ? kCommandCenter : kCommandEnable);
       }
       // Status requests share the MCU's pending control command slot.
@@ -355,7 +416,7 @@ class GimbalBridgeNode {
 
   ros::NodeHandle nh_;
   ros::NodeHandle pnh_;
-  ros::Subscriber observation_sub_, autonomy_sub_;
+  ros::Subscriber observation_sub_, autonomy_sub_, odom_sub_;
   ros::ServiceServer center_service_;
   ros::Publisher connected_pub_;
   ros::Publisher ready_pub_, enabled_pub_;
@@ -387,6 +448,11 @@ class GimbalBridgeNode {
   double camera_roll_{0.0};
   double camera_pitch_offset_{0.0};
   double camera_yaw_offset_{0.0};
+  double fallback_hfov_deg_{88.0};
+  double yaw_feedforward_sec_{.12}, max_yaw_feedforward_px_{120.0}, odom_wz_{0.0};
+  double status_period_est_sec_{.516};
+  bool avoid_status_tx_window_{true}, have_status_{false};
+  ros::Time last_odom_time_;
 
   bool connected_{false};
   bool servo_ready_{false};
@@ -396,6 +462,7 @@ class GimbalBridgeNode {
   std::size_t bad_lines_{0};
   stm32_bridge::GimbalStartup startup_;
   stm32_bridge::GimbalStatusParser status_parser_;
+  stm32_bridge::GimbalTiltController tilt_controller_;
   double pan_deg_{0.0};
   double tilt_deg_{0.0};
   std::string rx_line_;

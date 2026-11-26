@@ -44,6 +44,12 @@ class Race:
         self.pose_reset_time = 0.0
         self.ready = self.connected = self.reached = False
         self.gimbal_enabled = self.gimbal_locked = False
+        tilt_sign = float(rospy.get_param("/gimbal_bridge/tilt_to_ros_sign", -1.0))
+        tilt_sign = -1.0 if tilt_sign < 0.0 else 1.0
+        default_servo_tilt = float(rospy.get_param("/gimbal_bridge/default_tilt_deg", 0.0))
+        max_servo_tilt = float(rospy.get_param("/gimbal_bridge/tilt_max_deg", 0.0))
+        self.expected_ros_tilt_deg = tilt_sign * default_servo_tilt
+        self.min_allowed_ros_tilt_deg = tilt_sign * max_servo_tilt - 2.0
         self.center_thread = None
         self.command_still = False
         self.enable = rospy.Publisher("/blue_autonomy/enable", Bool, queue_size=4, tcp_nodelay=True)
@@ -197,9 +203,15 @@ class Race:
             gimbal_issue = "云台未使能(mode=0)"
         elif now - joint_time > 1.5:
             gimbal_issue = "云台角度无实时数据"
-        elif not self.gimbal_locked and abs(tilt_deg) > 4.0:
-            gimbal_issue = f"云台未平视(tilt={tilt_deg:.1f}°)"
-        gimbal_status = "--" if gimbal_issue else f"OK (enabled, tilt={tilt_deg:.1f}°)"
+        elif not self.gimbal_locked and (
+            abs(tilt_deg - self.expected_ros_tilt_deg) > 4.0
+            or (self.expected_ros_tilt_deg > 1.0 and tilt_deg < self.min_allowed_ros_tilt_deg)
+        ):
+            gimbal_issue = (
+                f"云台俯角未归位(当前={tilt_deg:+.1f}°, "
+                f"目标={self.expected_ros_tilt_deg:+.1f}°±4°)"
+            )
+        gimbal_status = "--" if gimbal_issue else f"OK (enabled, 俯角={tilt_deg:+.1f}°)"
         amcl_time, amcl_error, amcl_std, yaw_error = self.amcl_reading
         localized = (amcl_time > self.pose_reset_time and amcl_error <= .30 and
                      amcl_std <= .30 and yaw_error <= .35)

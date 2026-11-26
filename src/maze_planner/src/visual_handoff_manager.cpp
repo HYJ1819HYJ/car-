@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -23,6 +24,14 @@ class VisualHandoffManager {
     pnh_.param<bool>("auto_start", auto_start_, false);
     pnh_.param<bool>("competition_mode", competition_mode_, false);
     pnh_.param<double>("max_handoff_distance", max_handoff_distance_, 1.30);
+    pnh_.param("max_handoff_lateral", max_handoff_lateral_, .38);
+    pnh_.param("max_handoff_yaw_rad", max_handoff_yaw_rad_, .40);
+    pnh_.param("entrance_max_handoff_lateral", entrance_max_handoff_lateral_, .75);
+    pnh_.param("entrance_max_handoff_yaw_rad", entrance_max_handoff_yaw_rad_, .65);
+    pnh_.param("approach_max_speed", approach_max_speed_, .35);
+    pnh_.param("approach_max_turn", approach_max_turn_, .40);
+    approach_max_speed_ = std::max(0.0, approach_max_speed_);
+    approach_max_turn_ = std::max(0.0, approach_max_turn_);
     pnh_.param<int>("required_clear_scans", required_clear_scans_, 3);
     pnh_.param<double>("camera_x", camera_x_, .145);
     pnh_.param<double>("camera_y", camera_y_, 0.0);
@@ -99,6 +108,7 @@ class VisualHandoffManager {
     mode_ = Mode::NAVIGATION;
     clear_scans_ = 0;
     nav_state_.clear();
+    nav_wait_since_ = ros::Time();
     visual_state_.clear();
     visual_blocked_since_ = ros::Time();
     race_start_ = ros::Time::now();
@@ -124,13 +134,26 @@ class VisualHandoffManager {
     publishState("IDLE: automatic handoff disabled");
   }
   void navCmdCb(const geometry_msgs::Twist::ConstPtr& msg) {
-    if (mode_ == Mode::NAVIGATION) command_pub_.publish(*msg);
+    if (mode_ != Mode::NAVIGATION) return;
+    geometry_msgs::Twist out = *msg;
+    if (nav_state_.find("APPROACH:") == 0) {
+      const double v = std::abs(out.linear.x), w = std::abs(out.angular.z);
+      const double vs = v > approach_max_speed_ ? approach_max_speed_ / v : 1.0;
+      const double ws = w > approach_max_turn_ ? approach_max_turn_ / w : 1.0;
+      out.linear.x *= std::min(vs, ws);
+      out.angular.z *= std::min(vs, ws);
+    }
+    command_pub_.publish(out);
   }
   void visualCmdCb(const geometry_msgs::Twist::ConstPtr& msg) {
     if (mode_ == Mode::VISUAL) command_pub_.publish(*msg);
   }
   void navStateCb(const std_msgs::String::ConstPtr& msg) {
     nav_state_ = msg->data;
+    if (nav_state_.find("APPROACH: waiting for a clear") != 0)
+      nav_wait_since_ = ros::Time();
+    else if (nav_wait_since_.isZero())
+      nav_wait_since_ = ros::Time::now();
     if (mode_ == Mode::NAVIGATION && nav_state_.find("IDLE:") != 0)
       publishState((nav_state_.find("APPROACH:") == 0 ? "TARGET_APPROACH: " : "EXPLORE: ") +
                    nav_state_);
@@ -235,26 +258,29 @@ class VisualHandoffManager {
     const maze_planner::Point2 tangent(-wall.outward.y, wall.outward.x);
     const double lateral = std::abs(maze_planner::dot(wall.marker, tangent));
     const double depth = -maze_planner::dot(wall.marker, wall.outward);
-    const bool close_and_aligned = maze_planner::norm(wall.marker) <= max_handoff_distance_ &&
-                                   lateral <= .32;
-    const bool entrance_reached = nav_state_.find("APPROACH: entrance reached") == 0 &&
-                                  depth <= 1.15 && lateral <= .38 &&
-                                  maze_planner::norm(wall.marker) <= max_handoff_distance_;
-    if (!close_and_aligned && !entrance_reached) {
+    const double range = maze_planner::norm(wall.marker);
+    const double yaw = std::abs(maze_planner::parkingYaw(wall));
+    const bool close_and_aligned = range <= max_handoff_distance_ &&
+        lateral <= max_handoff_lateral_ && (!competition_mode_ || yaw <= max_handoff_yaw_rad_);
+    const bool arrived = nav_state_.find("APPROACH: entrance reached") == 0;
+    const bool waited = !nav_wait_since_.isZero() && (now - nav_wait_since_).toSec() >= 1.5;
+    const bool entrance_or_stalled_close = (arrived || waited) && depth <= 1.15 &&
+        range <= max_handoff_distance_ && lateral <= entrance_max_handoff_lateral_ &&
+        (!competition_mode_ || yaw <= entrance_max_handoff_yaw_rad_);
+    std::ostringstream geometry;
+    geometry << " (norm=" << range << ", depth=" << depth << ", lat=" << lateral
+             << ", yaw=" << yaw << ")";
+    if (!close_and_aligned && !entrance_or_stalled_close) {
       *reason = "outside the short-range terminal corridor";
-      return false;
-    }
-    // Close to a corner, the ray to the marker can be clear before the base
-    // has turned off the side wall. Leave that turn to move_base.
-    if (competition_mode_ && std::abs(maze_planner::parkingYaw(wall)) > .30) {
-      *reason = "waiting for move_base to align with the finish wall";
+      *reason += geometry.str();
       return false;
     }
     // The same swept-body and observed-ray check also governs the entrance
     // fallback. Arriving at a navigation goal never proves the corridor clear.
-    return maze_planner::handoffCorridorClear(scan_, obstacles, footprint_,
-                                               wall.marker.x, wall.marker.y,
-                                               corridor_params_, reason);
+    const bool clear = maze_planner::handoffCorridorClear(scan_, obstacles, footprint_,
+        wall.marker.x, wall.marker.y, corridor_params_, reason);
+    if (!clear) *reason += geometry.str();
+    return clear;
   }
 
   void switchToVisual(const std::string& reason) {
@@ -301,7 +327,10 @@ class VisualHandoffManager {
     std::string reason;
     if (!corridorReady(&reason)) {
       clear_scans_ = 0;
-      ROS_DEBUG_THROTTLE(1.0, "Terminal handoff waiting: %s", reason.c_str());
+      if (nav_state_.find("APPROACH:") == 0)
+        ROS_INFO_THROTTLE(2.0, "Terminal handoff waiting: %s", reason.c_str());
+      else
+        ROS_DEBUG_THROTTLE(1.0, "Terminal handoff waiting: %s", reason.c_str());
       return;
     }
     if (++clear_scans_ >= required_clear_scans_)
@@ -320,11 +349,15 @@ class VisualHandoffManager {
   sensor_msgs::CameraInfo camera_info_;
   ros::Time observation_received_, joint_received_, scan_received_, checked_scan_stamp_;
   ros::Time race_start_, visual_blocked_since_, recheck_after_;
+  ros::Time nav_wait_since_;
   Mode mode_{Mode::IDLE};
   bool auto_start_{false}, competition_mode_{false};
   bool have_observation_{false}, have_camera_info_{false};
   int required_clear_scans_{3}, clear_scans_{0};
   double max_handoff_distance_{1.30};
+  double max_handoff_lateral_{.38}, max_handoff_yaw_rad_{.40};
+  double entrance_max_handoff_lateral_{.75}, entrance_max_handoff_yaw_rad_{.65};
+  double approach_max_speed_{.35}, approach_max_turn_{.40};
   maze_planner::GimbalHistory gimbal_history_;
   double camera_x_{.145}, camera_y_{0.0}, paper_height_{.297}, fallback_hfov_deg_{88.0};
   double max_target_range_{8.0}, range_absolute_tolerance_{.25}, range_relative_tolerance_{.20};

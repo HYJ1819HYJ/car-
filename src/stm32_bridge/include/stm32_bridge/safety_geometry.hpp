@@ -6,6 +6,24 @@
 
 namespace stm32_bridge {
 
+inline bool limitReverseSpeed(double limit, double& v, double& w) {
+  if (v >= -limit) return false;
+  w *= -limit / v;
+  v = -limit;
+  return true;
+}
+
+inline bool keepFrontLimitedRotation(double& v, double w) {
+  if (v <= 1e-3 || v >= .03 || std::abs(w) <= .10) return false;
+  v = 0.0;
+  return true;
+}
+
+inline void stopBlockedTrajectory(bool turn_only_safe, double& v, double& w) {
+  v = 0.0;
+  if (!turn_only_safe) w = 0.0;
+}
+
 struct SafetyPoint {
   double x{0.0};
   double y{0.0};

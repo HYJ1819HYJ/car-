@@ -63,8 +63,8 @@ double lineDeviation(const Pose& p,const Pose& a,const Pose& b) {
   return std::hypot(p.x-a.x-t*dx,p.y-a.y-t*dy);
 }
 }
-static int collisionCells(const Pose& pose,const costmap_2d::Costmap2D& map,
-              const std::vector<geometry_msgs::Point>& body,double padding, bool count_all = true) {
+int collisionCells(const Pose& pose,const costmap_2d::Costmap2D& map,
+                   const std::vector<geometry_msgs::Point>& body,double padding, bool count_all) {
   if(body.size()<3 || !std::isfinite(pose.x+pose.y+pose.yaw)) return 10000;
   auto poly=body;costmap_2d::padFootprint(poly,padding);
   double xmin=1e30,ymin=1e30,xmax=-1e30,ymax=-1e30,c=std::cos(pose.yaw),s=std::sin(pose.yaw);
@@ -76,11 +76,14 @@ static int collisionCells(const Pose& pose,const costmap_2d::Costmap2D& map,
   // once and keep the exact SAT axes and contact tolerances for every cell.
   std::vector<CollisionAxis> axes;
   int blocked=0;
+  const unsigned int width=map.getSizeInCellsX();
+  const unsigned char* const costs=map.getCharMap();
+  const double half_cell=map.getResolution()/2;
   for(unsigned int y=y0;y<=y1;++y)for(unsigned int x=x0;x<=x1;++x){
     // 253 is a center-based inflation cost, not another physical obstacle.
-    if(map.getCost(x,y)<costmap_2d::LETHAL_OBSTACLE)continue;
+    if(costs[y*width+x]<costmap_2d::LETHAL_OBSTACLE)continue;
     double wx,wy;map.mapToWorld(x,y,wx,wy);
-    if (axes.empty()) axes = collisionAxes(poly, map.getResolution() / 2);
+    if (axes.empty()) axes = collisionAxes(poly, half_cell);
     if (intersects(axes, wx, wy)) {
       if (!count_all) return 1;
       ++blocked;
@@ -103,6 +106,26 @@ bool pathFree(const std::vector<Pose>& path,const costmap_2d::Costmap2D& map,
     for(int j=1;j<=n;++j){auto p=blend(path[i-1],path[i],double(j)/n);if(!poseFree(p,map,body,padding)){if(failed_pose)*failed_pose=p;return false;}}
   }
   return true;
+}
+bool pathFreeOrPaddingEscape(const std::vector<Pose>& path,const costmap_2d::Costmap2D& map,
+                             const std::vector<geometry_msgs::Point>& body,double padding) {
+  if(path.empty())return false;
+  if(pathFree(path,map,body,padding))return true;
+  if(padding<=0.0 || !pathFree(path,map,body,0.0))return false;
+  const int initial=collisionCells(path.front(),map,body,padding);
+  if(initial<=0)return false;
+  double radius=0;for(const auto& p:body)radius=std::max(radius,std::hypot(p.x,p.y)+2*padding);
+  int previous=initial;
+  for(size_t i=1;i<path.size();++i){
+    const double sweep=distance(path[i-1],path[i])+radius*std::abs(wrap(path[i].yaw-path[i-1].yaw));
+    const int n=std::max(1,static_cast<int>(std::ceil(sweep/(map.getResolution()/2))));
+    for(int j=1;j<=n;++j){
+      const int hits=collisionCells(blend(path[i-1],path[i],double(j)/n),map,body,padding);
+      if(hits>previous)return false;
+      previous=hits;
+    }
+  }
+  return previous<initial;
 }
 bool smooth(const std::vector<Pose>& raw,const costmap_2d::Costmap2D& map,
             const std::vector<geometry_msgs::Point>& body,const Config& cfg,

@@ -78,6 +78,7 @@ public:
     nh_.param<double>("safety_prediction_step", safety_prediction_step_, 0.03);
     nh_.param<double>("safety_collision_padding", safety_collision_padding_, 0.03);
     nh_.param<bool>("navigation_allow_reverse", navigation_allow_reverse_, false);
+    nh_.param<double>("navigation_reverse_max_speed", navigation_reverse_max_speed_, 0.15);
     nh_.param<double>("joystick_reverse_max_speed", joystick_reverse_max_speed_, 0.15);
     nh_.param<double>("vehicle_front_x", vehicle_front_x_, 0.3483);
     nh_.param<double>("vehicle_rear_x", vehicle_rear_x_, -0.1517);
@@ -98,6 +99,9 @@ public:
     safety_prediction_time_ = std::max(0.10, safety_prediction_time_);
     safety_prediction_step_ = std::max(0.01, safety_prediction_step_);
     safety_collision_padding_ = std::max(0.0, safety_collision_padding_);
+    navigation_reverse_max_speed_ = std::max(0.0, std::min(.15, navigation_reverse_max_speed_));
+    navigation_allow_reverse_ = navigation_allow_reverse_ && safety_enable_ &&
+                                navigation_reverse_max_speed_ > 0.0;
     joystick_reverse_max_speed_ = std::max(0.0, joystick_reverse_max_speed_);
 
     SafetyFootprint body;
@@ -339,10 +343,8 @@ private:
     bool safety_stopped = false;
     bool collision_predicted = false;
 
-    // DWA/recovery code must never back the vehicle into an unobserved corner.
-    // Manual reverse remains available at a reduced speed and is protected by
-    // the same rear clearance and full-footprint trajectory check below.
-    if (control_source == "cmd_vel" && v < -1e-3 && !navigation_allow_reverse_) {
+    const bool autonomous = control_source == "cmd_vel";
+    if (autonomous && v < 0.0 && !navigation_allow_reverse_) {
       v = 0.0;
       // Reject the complete planned twist. Keeping its angular component
       // turns a rejected reverse arc into an unintended spin in place.
@@ -350,7 +352,9 @@ private:
       safety_stopped = true;
       control_source += "+navigation_reverse_blocked";
       ROS_WARN_THROTTLE(0.5, "Autonomous reverse command rejected: full twist stopped");
-    } else if (control_source == "cmd_vel") {
+    } else if (autonomous) {
+      if (stm32_bridge::limitReverseSpeed(navigation_reverse_max_speed_, v, w))
+        control_source += "+nav_reverse_limited";
       // Limit the complete twist before the lidar checks so the arc keeps its curvature.
       const double linear_scale = std::abs(v) > cmd_max_v_ ? cmd_max_v_ / std::abs(v) : 1.0;
       const double angular_scale = std::abs(w) > cmd_max_w_ ? cmd_max_w_ / std::abs(w) : 1.0;
@@ -373,9 +377,12 @@ private:
         ROS_WARN_THROTTLE(1.0, "Lidar timeout: safety stop");
       } else if (scan_fresh) {
         bool directional_stop = false;
-        if (v > 1e-3 && front_clearance_ <= safety_stop_distance_) {
+        if (autonomous && front_clearance_ < safety_slow_distance_ &&
+            stm32_bridge::keepFrontLimitedRotation(v, w)) {
+          control_source += "+front_rotation_only";
+        } else if (v > 1e-3 && front_clearance_ <= safety_stop_distance_) {
           v = 0.0;
-          if (control_source == "cmd_vel") w = 0.0;
+          if (autonomous) w = 0.0;
           directional_stop = true;
           safety_stopped = true;
           control_source += "+front_emergency_stop";
@@ -384,7 +391,7 @@ private:
         } else if (v < -1e-3 &&
                    rear_clearance_ <= safety_rear_stop_distance_) {
           v = 0.0;
-          if (control_source == "cmd_vel") w = 0.0;
+          if (autonomous) w = 0.0;
           directional_stop = true;
           safety_stopped = true;
           control_source += "+rear_emergency_stop";
@@ -397,14 +404,14 @@ private:
           v *= scale;
           // Autonomous arcs must keep their curvature when slowed; reducing
           // v alone makes the car turn harder than its collision-checked plan.
-          if (control_source == "cmd_vel") w *= scale;
+          if (autonomous) w *= scale;
           control_source += "+front_slow";
         } else if (v < -1e-3 && rear_clearance_ < safety_slow_distance_) {
           const double scale = std::max(0.0, std::min(1.0,
               (rear_clearance_ - safety_rear_stop_distance_) /
               (safety_slow_distance_ - safety_rear_stop_distance_)));
           v *= scale;
-          if (control_source == "cmd_vel") w *= scale;
+          if (autonomous) w *= scale;
           control_source += "+rear_slow";
         }
 
@@ -421,11 +428,10 @@ private:
                                       control_source.compare(0, 8, "joystick") == 0 &&
                                       std::fabs(w) > 1e-3 &&
                                       !trajectoryBlocked(0.0, w);
-          v = 0.0;
+          stm32_bridge::stopBlockedTrajectory(turn_only_safe, v, w);
           if (turn_only_safe) {
             control_source += "+trajectory_stop_turn_allowed";
           } else {
-            w = 0.0;
             control_source += "+trajectory_collision_stop";
           }
           ROS_WARN_THROTTLE(0.5,
@@ -551,6 +557,7 @@ private:
   double safety_prediction_step_{0.03};
   double safety_collision_padding_{0.03};
   bool navigation_allow_reverse_{false};
+  double navigation_reverse_max_speed_{0.15};
   double joystick_reverse_max_speed_{0.15};
   double vehicle_front_x_{0.3483};
   double vehicle_rear_x_{-0.1517};

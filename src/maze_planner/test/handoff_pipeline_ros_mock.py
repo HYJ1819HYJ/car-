@@ -32,7 +32,6 @@ from stm32_bridge.msg import BlueTargetObservation
 
 MASTER = "http://127.0.0.1:11329"
 RANGES = np.linspace(-.75 * math.pi, .75 * math.pi, 1081)
-CAM_FOCAL = 640 / (2 * math.tan(math.radians(44)))
 WORKSPACE = Path(__file__).resolve().parents[3]
 START = (1.0, 0.0, 0.0)
 FALSE_BLUE_FIELD = "false_blue_deadend_and_narrow_dynamic"
@@ -201,7 +200,11 @@ class Simulation:
         self.phases, self.goals = [], []
         self.nav_events, self.planning_times = [], []
         self.center_requests = 0
-        self.prestart_tilt = 0.0
+        hfov = rospy.get_param("/handoff_blue_navigator/fallback_hfov_deg")
+        self.focal_px = 640 / (2 * math.tan(math.radians(hfov / 2)))
+        self.default_tilt_deg = (rospy.get_param("/gimbal_bridge/default_tilt_deg") *
+                                 rospy.get_param("/gimbal_bridge/tilt_to_ros_sign"))
+        self.prestart_tilt = math.radians(self.default_tilt_deg)
         self.false_stage = ""
         self.ghost_after_cooldown = False
         self.false_release_time = None
@@ -427,7 +430,12 @@ class Simulation:
             wall_range = self.field.cast(cam_x, cam_y, np.array([absolute]))[0]
             # The simulated camera can see above the box. The laser cannot.
             visible = abs(wall_range - distance) <= .08
-        if self.field.verify_dropout and self.state.startswith("TERMINAL_PARK:") and x > 6.315:
+        # Inject a loss after terminal control has acquired the target. An
+        # immediate loss on enable tests initial acquisition, not continuity.
+        if (self.field.verify_dropout and x > 6.315 and self.dropout_until is None and
+                self.state.startswith("TERMINAL_PARK: APPROACH:")):
+            self.dropout_until = time.monotonic() + .45
+        if self.dropout_until is not None and time.monotonic() < self.dropout_until:
             self.dropout_samples += 1
             visible = False
         joint = JointState()
@@ -438,12 +446,13 @@ class Simulation:
         obs = BlueTargetObservation()
         obs.header.stamp, obs.detected = stamp, visible
         obs.image_width, obs.image_height = 640, 480
-        obs.center_x = 320 - CAM_FOCAL * math.tan(bearing - pan) if visible else 320
-        obs.center_y = 240
+        obs.center_x = 320 - self.focal_px * math.tan(bearing - pan) if visible else 320
+        down = math.atan2(.42 - .2985, distance)
+        obs.center_y = 240 + self.focal_px * math.tan(down - self.prestart_tilt)
         estimated_distance = distance
         if self.field.name == WALL_ANCHOR_FIELD and x < 4.25:
             estimated_distance -= .75
-        obs.pixel_height = CAM_FOCAL * .297 / max(.12, estimated_distance)
+        obs.pixel_height = self.focal_px * .297 * math.cos(down) / max(.12, estimated_distance)
         obs.pixel_width = obs.pixel_height * .71
         obs.contour_ratio = min(.09, obs.pixel_height * obs.pixel_width / (640 * 480))
         if self.field.name == WALL_ANCHOR_FIELD:
@@ -537,8 +546,8 @@ class Simulation:
               flush=True)
 
     def check_gimbal_prestart(self, terminal, marker, boxes, box_edges, rate):
-        for enabled, tilt, expected in [(False, 0.0, "云台未使能(mode=0)"),
-                                        (True, -13.5, "云台未平视(tilt=-13.5°)")]:
+        for enabled, tilt, expected in [(False, self.default_tilt_deg, "云台未使能(mode=0)"),
+                                        (True, -13.5, "云台俯角未归位(当前=-13.5°")]:
             self.gimbal[-1].publish(enabled)
             self.prestart_tilt = math.radians(tilt)
             for _ in range(8):
@@ -550,7 +559,7 @@ class Simulation:
                 rate.sleep()
             assert expected in terminal.read(), terminal.read()
             assert self.state.startswith("IDLE:"), self.state
-        self.prestart_tilt = 0.0
+        self.prestart_tilt = math.radians(self.default_tilt_deg)
         print("Verified pre-start mode=0 and tilted-camera launch gates.", flush=True)
 
     @staticmethod
@@ -562,6 +571,7 @@ class Simulation:
         self.first_handoff = None
         self.anchor_terminal_time = None
         self.dropout_samples = 0
+        self.dropout_until = None
         self.observe_positions = []
         self.nav_events.clear()
         self.planning_times.clear()
@@ -687,8 +697,12 @@ class Simulation:
                       dropout_samples=self.dropout_samples, terminal_events=self.terminal_events)
         if name == FALSE_BLUE_FIELD:
             ghost_approach = next((t for t, state in self.nav_events if state.startswith("APPROACH:")), None)
+            first_arrival = next((t for t, state in self.nav_events if "entrance reached" in state), None)
             report.update(top_detections=self.top_detections, top_frames=self.top_frames_observed,
-                          ghost_verification_seconds=None if false_released is None else false_released - ghost_approach,
+                          ghost_approach_to_release_seconds=None if false_released is None else
+                          false_released - ghost_approach,
+                          ghost_verification_seconds=None if first_arrival is None or false_released is None else
+                          false_released - first_arrival,
                           ghost_entrances=sum("entrance reached" in state and
                                              (false_released is None or t <= false_released)
                                              for t, state in self.nav_events),
@@ -732,6 +746,7 @@ class Simulation:
         if name == FALSE_BLUE_FIELD:
             assert self.top_frames_observed >= 8 and self.top_detections == 0, report
             assert false_released is not None and report["ghost_verification_seconds"] < 10.0, report
+            assert report["ghost_approach_to_release_seconds"] < 15.0, report
             assert report["ghost_entrances"] == 2, report
             assert self.ghost_samples_after_release > 5 and not self.ghost_accepted_after_release, report
             assert not any(state.startswith("APPROACH:") and false_released < t < false_released + 3.4

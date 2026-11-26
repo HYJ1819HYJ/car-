@@ -31,6 +31,29 @@ TEST(SafetyGeometry, ExactTurnAllowsPointOutsideSweptRectangle) {
                                     0.0, 0.75, 0.60, 0.01));
 }
 
+TEST(SafetyGeometry, FrontLimitedRotationKeepsYawAndChecksTheOriginalSweep) {
+  double v = .01, w = -.45;
+  const double front_clearance = .22;
+  ASSERT_TRUE(front_clearance < .60 && stm32_bridge::keepFrontLimitedRotation(v,w));
+  EXPECT_DOUBLE_EQ(v,0.0);
+  EXPECT_DOUBLE_EQ(w,-.45);
+  EXPECT_FALSE(trajectoryIntersects({{.57,0}},kCar,v,w,.60,.02));
+  v = .04;
+  EXPECT_FALSE(stm32_bridge::keepFrontLimitedRotation(v,w));
+}
+
+TEST(SafetyGeometry, ControlledReverseKeepsCurvatureAndStopsOnSideRearCollision) {
+  double v = -.30, w = .60;
+  ASSERT_TRUE(stm32_bridge::limitReverseSpeed(.15,v,w));
+  EXPECT_DOUBLE_EQ(v,-.15);
+  EXPECT_DOUBLE_EQ(w,.30);
+  EXPECT_DOUBLE_EQ(w/v,-2.0);
+  ASSERT_TRUE(trajectoryIntersects({{-.235,-.16}},kCar,v,w,.60,.02));
+  stm32_bridge::stopBlockedTrajectory(false,v,w);
+  EXPECT_DOUBLE_EQ(v,0.0);
+  EXPECT_DOUBLE_EQ(w,0.0);
+}
+
 TEST(SafetyGeometry, ExactTurnRejectsCornerSweepCollision) {
   EXPECT_TRUE(trajectoryIntersects({SafetyPoint{0.30, 0.30}}, kCar,
                                    0.0, 0.75, 0.60, 0.01));

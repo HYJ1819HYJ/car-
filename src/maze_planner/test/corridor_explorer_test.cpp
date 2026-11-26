@@ -102,6 +102,30 @@ TEST(FinishEntrance, AvoidsGoalsCloseBehindTheRobotDuringReselection) {
   EXPECT_FALSE(distance < .55 && offset.x < -.5 * distance);
 }
 
+TEST(FinishEntrance, SelectFinishEntranceRejectsDisconnectedPocketAndStaticUnknown) {
+  auto map = room();
+  const maze_planner::WallObservation wall{{7.10,2.5},{-1,0}};
+  for (int y = 37; y < 63; ++y) map.data[y*map.info.width+120] = 99;
+  maze_planner::CorridorGrid grid(map);
+  const maze_planner::Point2 robot{2,2.5};
+  maze_planner::Point2 entrance;
+  grid.cost[grid.cell(robot)] = 99;
+  auto static_map = room();
+  const int pocket = grid.cell({6.30,2.5});
+  static_map.data[pocket] = -1;
+  ASSERT_TRUE(grid.footprintClear({6.30,2.5},0,rectangle));
+  EXPECT_FALSE(maze_planner::reachableMask(grid,robot)[pocket]);
+  EXPECT_EQ(static_map.data[pocket],-1);
+  ASSERT_TRUE(maze_planner::selectFinishEntrance(
+      grid,wall,rectangle,{},&entrance,.02,&robot,0,false,&static_map,true));
+  EXPECT_NEAR(entrance.x,5.95,1e-6);
+  EXPECT_EQ(static_map.data[grid.cell(entrance)],0);
+  const auto clear = maze_planner::CorridorGrid(room());
+  ASSERT_TRUE(maze_planner::selectFinishEntrance(
+      clear,wall,rectangle,{},&entrance,.02,&robot,0,false,&static_map,true));
+  EXPECT_GT(maze_planner::norm(entrance-maze_planner::Point2(6.30,2.5)),.1);
+}
+
 TEST(FinishVerification, SuppressesOnlyAfterTwoBlindEntranceScans) {
   using namespace maze_planner;
   using Result = FinishTargetVerification::Result;

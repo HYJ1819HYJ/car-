@@ -10,10 +10,16 @@ rviz_container=car-competition-rviz
 bag_container=car-competition-bag
 action="${1:-help}"
 field="${2:-}"
+fields_root="$root/outputs/competition-fields"
 
 if [[ "$action" == help || "$action" == --help ]]; then
   printf '用法：bash tools/competition_terminal.sh prepare\n'
-  printf '      bash tools/competition_terminal.sh {map|rviz|save|ready|status|go|record|stop} 场次名\n'
+  printf '      bash tools/competition_terminal.sh maps\n'
+  printf '      bash tools/competition_terminal.sh map 场次名\n'
+  printf '      bash tools/competition_terminal.sh ready [场次名] [--map 源地图场次]\n'
+  printf '      bash tools/competition_terminal.sh {rviz|save|status|go|record|stop} [场次名]\n'
+  printf '\n提示：ready 不传场次名或目标场次缺地图时，会在交互终端弹出已有地图选择菜单；\n'
+  printf '      rviz/save/status/go/record/stop 省略场次名时会自动匹配当前运行中的场次。\n'
   exit 0
 fi
 
@@ -38,15 +44,229 @@ if [[ "$action" == prepare ]]; then
   exit 0
 fi
 
-case "$action" in
-  map|rviz|turn|save|ready|status|go|record|stop) ;;
-  *) printf '未知命令：%s\n' "$action" >&2; exit 2 ;;
-esac
-[[ $# -eq 2 && "$field" =~ ^[[:alnum:]_][[:alnum:]_.-]*$ ]] || {
-  printf '请提供场次名，例如 retest-01。\n' >&2
-  exit 2
+valid_field_name() {
+  [[ -n "${1:-}" && "$1" =~ ^[[:alnum:]_][[:alnum:]_.-]*$ ]]
 }
-field_dir="$root/outputs/competition-fields/$field"
+
+field_has_map() {
+  local dir="$1" name
+  for name in map.yaml map.pgm start_pose.json; do
+    [[ -s "$dir/$name" ]] || return 1
+  done
+}
+
+scan_available_maps() {
+  local mode="${1:-table}"
+  python3 - "$fields_root" "$mode" <<'PY'
+import json
+import os
+import sys
+from datetime import datetime
+from pathlib import Path
+
+root = Path(sys.argv[1])
+mode = sys.argv[2]
+required = ("map.yaml", "map.pgm", "start_pose.json")
+
+entries = []
+if root.is_dir():
+    for child in root.iterdir():
+        if not child.is_dir():
+            continue
+        if not all((child / f).is_file() and (child / f).stat().st_size > 0 for f in required):
+            continue
+        mtime = (child / "map.yaml").stat().st_mtime
+        pose_text = "起点未知"
+        try:
+            pose = json.loads((child / "start_pose.json").read_text(encoding="utf-8"))
+            pose_text = f"起点({pose['x']:+.2f}, {pose['y']:+.2f}, {pose['yaw']:+.2f}rad)"
+        except Exception:
+            pass
+        bags_dir = child / "bags"
+        attempts = 0
+        if bags_dir.is_dir():
+            attempts = sum(1 for p in bags_dir.iterdir() if p.is_dir() and p.name.startswith("attempt-"))
+        source = ""
+        source_file = child / "map_source.txt"
+        if source_file.is_file():
+            try:
+                first_line = source_file.read_text(encoding="utf-8").splitlines()[0].strip()
+                if first_line:
+                    source = f"  [复用:{first_line}]"
+            except Exception:
+                pass
+        entries.append((mtime, child.name, pose_text, attempts, source))
+
+entries.sort(key=lambda item: (-item[0], item[1]))
+if mode == "names":
+    for _, name, _, _, _ in entries:
+        print(name)
+else:
+    if not entries:
+        sys.exit(0)
+    width = max(len(item[1]) for item in entries)
+    for idx, (mtime, name, pose_text, attempts, source) in enumerate(entries, start=1):
+        ts = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
+        print(f"  [{idx}] {name:<{width}}  保存:{ts}  {pose_text}  录包:{attempts}轮{source}")
+PY
+}
+
+selected_map_field=""
+select_existing_map() {
+  local prompt_header="$1"
+  local -a available=()
+  local line choice idx
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && available+=("$line")
+  done < <(scan_available_maps names)
+  if [[ ${#available[@]} -eq 0 ]]; then
+    return 1
+  fi
+  printf '%s\n' "$prompt_header" >&2
+  scan_available_maps table >&2
+  while true; do
+    printf '请输入地图编号 [1-%d]（直接回车默认选 1，输入 q 取消）：' "${#available[@]}" >&2
+    if ! IFS= read -r choice; then
+      printf '\n已取消选择。\n' >&2
+      return 2
+    fi
+    choice="${choice//[[:space:]]/}"
+    if [[ -z "$choice" ]]; then
+      selected_map_field="${available[0]}"
+      return 0
+    fi
+    if [[ "$choice" == q || "$choice" == Q ]]; then
+      printf '已取消。\n' >&2
+      return 2
+    fi
+    if [[ "$choice" =~ ^[0-9]+$ ]] && (( 10#$choice >= 1 && 10#$choice <= ${#available[@]} )); then
+      idx=$((10#$choice - 1))
+      selected_map_field="${available[$idx]}"
+      return 0
+    fi
+    printf '无效输入：%s，请输入 1-%d 之间的数字或 q。\n' "$choice" "${#available[@]}" >&2
+  done
+}
+
+copy_field_map() {
+  local src_field="$1" dst_field="$2"
+  local src_dir="$fields_root/$src_field"
+  local dst_dir="$fields_root/$dst_field"
+  local name
+  valid_field_name "$src_field" || { printf '源地图场次名无效：%s\n' "$src_field" >&2; return 1; }
+  field_has_map "$src_dir" || { printf '源场次 %s 缺少完整地图文件（map.yaml / map.pgm / start_pose.json）。\n' "$src_field" >&2; return 1; }
+  for name in map.yaml map.pgm start_pose.json; do
+    if [[ -e "$dst_dir/$name" ]]; then
+      printf '目标场次 %s 已存在 %s，为避免覆盖原地图已中止；请换一个新场次名或直接启动该场次。\n' "$dst_field" "$name" >&2
+      return 1
+    fi
+  done
+  mkdir -p "$dst_dir"
+  for name in map.yaml map.pgm start_pose.json; do
+    cp -- "$src_dir/$name" "$dst_dir/$name"
+  done
+  if [[ -s "$src_dir/lidar_self_echo.yaml" && ! -e "$dst_dir/lidar_self_echo.yaml" ]]; then
+    cp -- "$src_dir/lidar_self_echo.yaml" "$dst_dir/lidar_self_echo.yaml"
+  fi
+  printf '%s\n# copied at %s\n' "$src_field" "$(date '+%Y-%m-%d %H:%M:%S')" > "$dst_dir/map_source.txt"
+  printf '已将地图与起点从 %s 复制到 %s（本场录包将独立保存在 %s/bags/）。\n' "$src_field" "$dst_field" "$dst_dir"
+}
+
+detect_running_field() {
+  local live
+  live="$(docker inspect --format '{{ index .Config.Labels "competition.field" }}' "$container" 2>/dev/null || true)"
+  if [[ -z "$live" && "$1" == allow_bag ]]; then
+    live="$(docker inspect --format '{{ index .Config.Labels "competition.field" }}' "$bag_container" 2>/dev/null || true)"
+  fi
+  printf '%s\n' "$live"
+}
+
+if [[ "$action" == maps ]]; then
+  table="$(scan_available_maps table)"
+  if [[ -z "$table" ]]; then
+    printf '当前没有已保存的可用地图（目录：%s）。请先运行 map 和 save。\n' "$fields_root"
+  else
+    printf '可用地图列表（按保存时间倒序）：\n%s\n' "$table"
+  fi
+  exit 0
+fi
+
+map_source=""
+case "$action" in
+  map|turn)
+    [[ $# -eq 2 ]] && valid_field_name "$field" || {
+      printf '请提供场次名，例如 retest-01。\n' >&2
+      exit 2
+    }
+    ;;
+  ready)
+    shift
+    field=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --map)
+          [[ $# -ge 2 ]] || { printf '--map 需要指定源地图场次名。\n' >&2; exit 2; }
+          map_source="$2"
+          shift 2
+          ;;
+        --select)
+          shift
+          ;;
+        -*)
+          printf '未知参数：%s\n' "$1" >&2
+          exit 2
+          ;;
+        *)
+          if [[ -n "$field" ]]; then
+            printf 'ready 最多只能指定一个场次名。\n' >&2
+            exit 2
+          fi
+          field="$1"
+          shift
+          ;;
+      esac
+    done
+    if [[ -n "$field" ]] && ! valid_field_name "$field"; then
+      printf '场次名无效：%s（请使用字母、数字、下划线、点或连字符）。\n' "$field" >&2
+      exit 2
+    fi
+    if [[ -n "$map_source" ]] && ! valid_field_name "$map_source"; then
+      printf '源地图场次名无效：%s\n' "$map_source" >&2
+      exit 2
+    fi
+    if [[ -z "$field" && -n "$map_source" ]]; then
+      field="$map_source"
+      map_source=""
+    fi
+    ;;
+  rviz|save|status|go|record|stop)
+    if [[ $# -eq 1 ]]; then
+      if [[ "$action" == stop ]]; then
+        field="$(detect_running_field allow_bag)"
+        if [[ -z "$field" ]]; then
+          printf '当前没有运行中的比赛任务。\n'
+          exit 0
+        fi
+      else
+        field="$(detect_running_field container_only)"
+        if [[ -z "$field" ]]; then
+          printf '当前没有运行中的比赛任务，请先运行 map 或 ready。\n' >&2
+          exit 1
+        fi
+      fi
+    elif [[ $# -eq 2 ]] && valid_field_name "$field"; then
+      :
+    else
+      printf '用法：bash tools/competition_terminal.sh %s [场次名]\n' "$action" >&2
+      exit 2
+    fi
+    ;;
+  *)
+    printf '未知命令：%s\n' "$action" >&2
+    exit 2
+    ;;
+esac
+field_dir="$fields_root/$field"
 
 serial_device() {
   local expected="$1" node
@@ -74,10 +294,16 @@ ros() {
 }
 
 require_phase() {
-  local phase="$1" live
+  local phase="$1" live live_field live_phase
   live="$(docker inspect --format '{{ index .Config.Labels "competition.field" }} {{ index .Config.Labels "competition.phase" }}' "$container" 2>/dev/null || true)"
   if [[ "$live" != "$field $phase" ]]; then
-    printf '场次 %s 的 %s 进程未启动。\n' "$field" "$phase" >&2
+    read -r live_field live_phase <<< "$live"
+    if [[ -n "$live_field" && "$live_field" != "$field" ]]; then
+      printf '场次 %s 的 %s 进程未启动（当前正在运行的场次为 %s [%s]，可直接省略场次名或执行 export FIELD=%s）。\n' \
+        "$field" "$phase" "$live_field" "${live_phase:-unknown}" "$live_field" >&2
+    else
+      printf '场次 %s 的 %s 进程未启动。\n' "$field" "$phase" >&2
+    fi
     exit 1
   fi
 }
@@ -146,6 +372,37 @@ case "$action" in
     if docker inspect "$container" >/dev/null 2>&1 || [[ -n "$(ss -Hlt 'sport = :11311')" ]]; then
       printf '已有 ROS 任务运行，请先停止。\n' >&2; exit 1
     fi
+    if [[ "$action" == ready ]]; then
+      if [[ -z "$field" ]]; then
+        [[ -t 0 ]] || { printf '未指定场次名，且当前不是交互终端；请提供场次名或执行 maps 查看可用地图。\n' >&2; exit 2; }
+        if ! select_existing_map '请选择要启动的已有地图（按保存时间倒序）：'; then
+          rc=$?
+          if [[ $rc -eq 1 ]]; then
+            printf '未找到任何已保存的地图，请先执行 map 和 save 建图。\n' >&2
+          fi
+          exit 1
+        fi
+        field="$selected_map_field"
+        field_dir="$fields_root/$field"
+        printf '已选择地图场次：%s\n' "$field"
+      elif [[ -n "$map_source" && "$map_source" != "$field" ]]; then
+        copy_field_map "$map_source" "$field"
+      elif ! field_has_map "$field_dir"; then
+        if [[ -t 0 ]] && [[ -n "$(scan_available_maps names)" ]]; then
+          if ! select_existing_map "场次 ${field} 缺少地图文件。可选择已有地图复制到该场次继续启动（本场录包独立保存在 ${field}/bags/）："; then
+            exit 1
+          fi
+          copy_field_map "$selected_map_field" "$field"
+        else
+          for name in map.yaml map.pgm start_pose.json; do
+            [[ -s "$field_dir/$name" ]] || { printf '缺少 %s，请完成 save，或运行 bash tools/competition_terminal.sh ready 选择已有地图。\n' "$name" >&2; exit 1; }
+          done
+        fi
+      fi
+      for name in map.yaml map.pgm start_pose.json; do
+        [[ -s "$field_dir/$name" ]] || { printf '缺少 %s，请完成 save。\n' "$name" >&2; exit 1; }
+      done
+    fi
     base="${ROBOT_BASE_DEVICE:-$(serial_device 8132)}"
     [[ -c "$base" ]] || { printf '底盘设备不存在：%s\n' "$base" >&2; exit 1; }
     devices=(--device "$base:/dev/ttyUSB0" --group-add "$(stat -Lc %g "$base")")
@@ -162,9 +419,6 @@ case "$action" in
       launch=(roslaunch -p 11311 maze_bridge slam_toolbox_build_map.launch
               port:=/dev/ttyUSB0 show_rviz:="$show_rviz" use_camera:=false)
     else
-      for name in map.yaml map.pgm start_pose.json; do
-        [[ -s "$field_dir/$name" ]] || { printf '缺少 %s，请完成 save。\n' "$name" >&2; exit 1; }
-      done
       gimbal="${ROBOT_GIMBAL_DEVICE:-$(serial_device 8134)}"
       camera="${ROBOT_CAMERA_DEVICE:-/dev/v4l/by-id/usb-HRY_USB_Camera_20191109-video-index0}"
       [[ -c "$gimbal" && -c "$camera" && "$(stat -Lc %t:%T "$base")" != "$(stat -Lc %t:%T "$gimbal")" ]] || {
@@ -202,7 +456,10 @@ case "$action" in
       printf 'ROS master 未就绪，请查看启动日志。docker logs %s\n' "$container" >&2
       exit 1
     fi
-    printf '%s 已启动。实时日志：docker logs -f %s\n' "$phase" "$container"
+    printf '%s 已启动（场次：%s）。实时日志：docker logs -f %s\n' "$phase" "$field" "$container"
+    if [[ "$phase" == navigation ]]; then
+      printf '后续执行 status / go / stop 可直接省略场次名（或先 export FIELD=%s）。\n' "$field"
+    fi
     ;;
   rviz)
     require_phase mapping
