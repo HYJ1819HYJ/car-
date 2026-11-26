@@ -1,0 +1,10 @@
+{
+  "state": "stopped",
+  "duration_s": 92.7,
+  "recorder_exit_code": 0,
+  "bags": [
+    "navigation_0.bag"
+  ],
+  "unfinished_files": [],
+  "ended_at": "2026-11-26T19:33:20.021737+08:00"
+}

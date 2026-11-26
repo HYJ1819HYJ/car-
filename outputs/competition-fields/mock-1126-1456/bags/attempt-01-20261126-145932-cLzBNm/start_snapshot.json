@@ -1,0 +1,1255 @@
+{
+  "started_at": "2026-11-26T14:59:34.285783+08:00",
+  "master": "http://127.0.0.1:11311",
+  "ROS_DISTRO": "noetic",
+  "maximum_minutes": 0.0,
+  "topics_at_start": [
+    [
+      "/rosout_agg",
+      "rosgraph_msgs/Log"
+    ],
+    [
+      "/rosout",
+      "rosgraph_msgs/Log"
+    ],
+    [
+      "/tf",
+      "tf2_msgs/TFMessage"
+    ],
+    [
+      "/odom",
+      "nav_msgs/Odometry"
+    ],
+    [
+      "/stm32_feedback_text",
+      "std_msgs/String"
+    ],
+    [
+      "/wheel_encoder",
+      "std_msgs/Int16MultiArray"
+    ],
+    [
+      "/front_obstacle_distance",
+      "std_msgs/Float32"
+    ],
+    [
+      "/rear_obstacle_distance",
+      "std_msgs/Float32"
+    ],
+    [
+      "/nearest_obstacle_radius",
+      "std_msgs/Float32"
+    ],
+    [
+      "/safety_stop",
+      "std_msgs/Bool"
+    ],
+    [
+      "/safety_collision_prediction",
+      "std_msgs/Bool"
+    ],
+    [
+      "/stm32_command_sent",
+      "geometry_msgs/Twist"
+    ],
+    [
+      "/joystick_lb_pressed",
+      "std_msgs/Bool"
+    ],
+    [
+      "/control_source",
+      "std_msgs/String"
+    ],
+    [
+      "/scan_raw",
+      "sensor_msgs/LaserScan"
+    ],
+    [
+      "/scan",
+      "sensor_msgs/LaserScan"
+    ],
+    [
+      "/scan_obstacles",
+      "sensor_msgs/LaserScan"
+    ],
+    [
+      "/scan_self_filtered_count",
+      "std_msgs/UInt32"
+    ],
+    [
+      "/tf_static",
+      "tf2_msgs/TFMessage"
+    ],
+    [
+      "/diagnostics",
+      "diagnostic_msgs/DiagnosticArray"
+    ],
+    [
+      "/gimbal/connected",
+      "std_msgs/Bool"
+    ],
+    [
+      "/gimbal/servo_ready",
+      "std_msgs/Bool"
+    ],
+    [
+      "/gimbal/target_locked",
+      "std_msgs/Bool"
+    ],
+    [
+      "/gimbal/searching",
+      "std_msgs/Bool"
+    ],
+    [
+      "/gimbal/status_text",
+      "std_msgs/String"
+    ],
+    [
+      "/gimbal/joint_states",
+      "sensor_msgs/JointState"
+    ],
+    [
+      "/map_metadata",
+      "nav_msgs/MapMetaData"
+    ],
+    [
+      "/map",
+      "nav_msgs/OccupancyGrid"
+    ],
+    [
+      "/handoff/cmd_vel_nav",
+      "geometry_msgs/Twist"
+    ],
+    [
+      "/move_base/goal",
+      "move_base_msgs/MoveBaseActionGoal"
+    ],
+    [
+      "/move_base/current_goal",
+      "geometry_msgs/PoseStamped"
+    ],
+    [
+      "/move_base/cancel",
+      "actionlib_msgs/GoalID"
+    ],
+    [
+      "/amcl_pose",
+      "geometry_msgs/PoseWithCovarianceStamped"
+    ],
+    [
+      "/move_base/recovery_status",
+      "move_base_msgs/RecoveryStatus"
+    ],
+    [
+      "/particlecloud",
+      "geometry_msgs/PoseArray"
+    ],
+    [
+      "/handoff/cmd_vel_visual",
+      "geometry_msgs/Twist"
+    ],
+    [
+      "/usb_cam/image_raw/compressedDepth",
+      "sensor_msgs/CompressedImage"
+    ],
+    [
+      "/handoff/visual_goal_reached",
+      "std_msgs/Bool"
+    ],
+    [
+      "/handoff/visual_state",
+      "std_msgs/String"
+    ],
+    [
+      "/usb_cam/image_raw/compressedDepth/parameter_descriptions",
+      "dynamic_reconfigure/ConfigDescription"
+    ],
+    [
+      "/cmd_vel",
+      "geometry_msgs/Twist"
+    ],
+    [
+      "/usb_cam/image_raw/compressedDepth/parameter_updates",
+      "dynamic_reconfigure/Config"
+    ],
+    [
+      "/handoff/nav_enable",
+      "std_msgs/Bool"
+    ],
+    [
+      "/handoff/visual_enable",
+      "std_msgs/Bool"
+    ],
+    [
+      "/goal_reached",
+      "std_msgs/Bool"
+    ],
+    [
+      "/blue_autonomy/state",
+      "std_msgs/String"
+    ],
+    [
+      "/goal_detected",
+      "std_msgs/Bool"
+    ],
+    [
+      "/blue_ratio",
+      "std_msgs/Float32"
+    ],
+    [
+      "/amcl/parameter_descriptions",
+      "dynamic_reconfigure/ConfigDescription"
+    ],
+    [
+      "/usb_cam/image_raw/compressed",
+      "sensor_msgs/CompressedImage"
+    ],
+    [
+      "/blue_target/observation",
+      "stm32_bridge/BlueTargetObservation"
+    ],
+    [
+      "/black_line/observation",
+      "stm32_bridge/BlackLineObservation"
+    ],
+    [
+      "/amcl/parameter_updates",
+      "dynamic_reconfigure/Config"
+    ],
+    [
+      "/usb_cam/image_raw/compressed/parameter_descriptions",
+      "dynamic_reconfigure/ConfigDescription"
+    ],
+    [
+      "/usb_cam/image_raw/compressed/parameter_updates",
+      "dynamic_reconfigure/Config"
+    ],
+    [
+      "/usb_cam/image_raw",
+      "sensor_msgs/Image"
+    ],
+    [
+      "/usb_cam/image_raw/theora",
+      "theora_image_transport/Packet"
+    ],
+    [
+      "/usb_cam/image_raw/theora/parameter_descriptions",
+      "dynamic_reconfigure/ConfigDescription"
+    ],
+    [
+      "/usb_cam/image_raw/theora/parameter_updates",
+      "dynamic_reconfigure/Config"
+    ],
+    [
+      "/handoff/nav_state",
+      "std_msgs/String"
+    ],
+    [
+      "/blue_target/map_pose",
+      "geometry_msgs/PoseStamped"
+    ],
+    [
+      "/blue_target/approach_goal",
+      "geometry_msgs/PoseStamped"
+    ],
+    [
+      "/handoff/nav_goal_reached",
+      "std_msgs/Bool"
+    ],
+    [
+      "/usb_cam/camera_info",
+      "sensor_msgs/CameraInfo"
+    ],
+    [
+      "/corner_clearance_map",
+      "nav_msgs/OccupancyGrid"
+    ],
+    [
+      "/move_base/global_costmap/corner_clearance_layer/parameter_descriptions",
+      "dynamic_reconfigure/ConfigDescription"
+    ],
+    [
+      "/move_base/global_costmap/corner_clearance_layer/parameter_updates",
+      "dynamic_reconfigure/Config"
+    ],
+    [
+      "/move_base/global_costmap/obstacle_layer/parameter_descriptions",
+      "dynamic_reconfigure/ConfigDescription"
+    ],
+    [
+      "/move_base/global_costmap/obstacle_layer/parameter_updates",
+      "dynamic_reconfigure/Config"
+    ],
+    [
+      "/move_base/global_costmap/inflation_layer/parameter_descriptions",
+      "dynamic_reconfigure/ConfigDescription"
+    ],
+    [
+      "/move_base/global_costmap/inflation_layer/parameter_updates",
+      "dynamic_reconfigure/Config"
+    ],
+    [
+      "/move_base/global_costmap/footprint",
+      "geometry_msgs/PolygonStamped"
+    ],
+    [
+      "/move_base/global_costmap/costmap",
+      "nav_msgs/OccupancyGrid"
+    ],
+    [
+      "/move_base/global_costmap/costmap_updates",
+      "map_msgs/OccupancyGridUpdate"
+    ],
+    [
+      "/move_base/global_costmap/parameter_descriptions",
+      "dynamic_reconfigure/ConfigDescription"
+    ],
+    [
+      "/move_base/global_costmap/parameter_updates",
+      "dynamic_reconfigure/Config"
+    ],
+    [
+      "/move_base/SmoothGlobalPlanner/raw/plan",
+      "nav_msgs/Path"
+    ],
+    [
+      "/move_base/SmoothGlobalPlanner/raw/potential",
+      "nav_msgs/OccupancyGrid"
+    ],
+    [
+      "/move_base/SmoothGlobalPlanner/raw/parameter_descriptions",
+      "dynamic_reconfigure/ConfigDescription"
+    ],
+    [
+      "/move_base/SmoothGlobalPlanner/raw/parameter_updates",
+      "dynamic_reconfigure/Config"
+    ],
+    [
+      "/move_base/SmoothGlobalPlanner/plan",
+      "nav_msgs/Path"
+    ],
+    [
+      "/move_base/GlobalPlanner/plan",
+      "nav_msgs/Path"
+    ],
+    [
+      "/move_base/SmoothGlobalPlanner/raw_plan",
+      "nav_msgs/Path"
+    ],
+    [
+      "/move_base/SmoothGlobalPlanner/diagnostics",
+      "std_msgs/String"
+    ],
+    [
+      "/move_base/local_costmap/corner_clearance_layer/parameter_descriptions",
+      "dynamic_reconfigure/ConfigDescription"
+    ],
+    [
+      "/move_base/local_costmap/corner_clearance_layer/parameter_updates",
+      "dynamic_reconfigure/Config"
+    ],
+    [
+      "/move_base/local_costmap/obstacle_layer/parameter_descriptions",
+      "dynamic_reconfigure/ConfigDescription"
+    ],
+    [
+      "/move_base/local_costmap/obstacle_layer/parameter_updates",
+      "dynamic_reconfigure/Config"
+    ],
+    [
+      "/move_base/local_costmap/inflation_layer/parameter_descriptions",
+      "dynamic_reconfigure/ConfigDescription"
+    ],
+    [
+      "/move_base/local_costmap/inflation_layer/parameter_updates",
+      "dynamic_reconfigure/Config"
+    ],
+    [
+      "/move_base/local_costmap/footprint",
+      "geometry_msgs/PolygonStamped"
+    ],
+    [
+      "/move_base/local_costmap/costmap",
+      "nav_msgs/OccupancyGrid"
+    ],
+    [
+      "/move_base/local_costmap/costmap_updates",
+      "map_msgs/OccupancyGridUpdate"
+    ],
+    [
+      "/move_base/local_costmap/parameter_descriptions",
+      "dynamic_reconfigure/ConfigDescription"
+    ],
+    [
+      "/move_base/local_costmap/parameter_updates",
+      "dynamic_reconfigure/Config"
+    ],
+    [
+      "/move_base/TebLocalPlannerROS/global_plan",
+      "nav_msgs/Path"
+    ],
+    [
+      "/move_base/TebLocalPlannerROS/local_plan",
+      "nav_msgs/Path"
+    ],
+    [
+      "/move_base/TebLocalPlannerROS/teb_poses",
+      "geometry_msgs/PoseArray"
+    ],
+    [
+      "/move_base/TebLocalPlannerROS/teb_markers",
+      "visualization_msgs/Marker"
+    ],
+    [
+      "/move_base/TebLocalPlannerROS/teb_feedback",
+      "teb_local_planner/FeedbackMsg"
+    ],
+    [
+      "/move_base/TebLocalPlannerROS/parameter_descriptions",
+      "dynamic_reconfigure/ConfigDescription"
+    ],
+    [
+      "/move_base/TebLocalPlannerROS/parameter_updates",
+      "dynamic_reconfigure/Config"
+    ],
+    [
+      "/move_base/ForwardTebLocalPlanner/diagnostics",
+      "std_msgs/String"
+    ],
+    [
+      "/move_base/result",
+      "move_base_msgs/MoveBaseActionResult"
+    ],
+    [
+      "/move_base/feedback",
+      "move_base_msgs/MoveBaseActionFeedback"
+    ],
+    [
+      "/move_base/status",
+      "actionlib_msgs/GoalStatusArray"
+    ],
+    [
+      "/move_base/parameter_descriptions",
+      "dynamic_reconfigure/ConfigDescription"
+    ],
+    [
+      "/move_base/parameter_updates",
+      "dynamic_reconfigure/Config"
+    ],
+    [
+      "/blue_autonomy/enable",
+      "std_msgs/Bool"
+    ],
+    [
+      "/initialpose",
+      "geometry_msgs/PoseWithCovarianceStamped"
+    ],
+    [
+      "/move_base/global_costmap/static_layer/parameter_descriptions",
+      "dynamic_reconfigure/ConfigDescription"
+    ],
+    [
+      "/move_base/global_costmap/static_layer/parameter_updates",
+      "dynamic_reconfigure/Config"
+    ]
+  ],
+  "parameters": {
+    "/move_base": {
+      "recovery_behaviors": [
+        {
+          "name": "clear_dynamic_obstacles",
+          "type": "clear_costmap_recovery/ClearCostmapRecovery"
+        }
+      ],
+      "clear_dynamic_obstacles": {
+        "layer_names": [
+          "obstacle_layer"
+        ],
+        "reset_distance": 4.0,
+        "invert_area_to_clear": false,
+        "affected_maps": "both"
+      },
+      "GlobalPlanner": {
+        "allow_unknown": false,
+        "default_tolerance": 0.05,
+        "use_dijkstra": true,
+        "use_quadratic": false,
+        "use_grid_path": true,
+        "old_navfn_behavior": true,
+        "lethal_cost": 253,
+        "neutral_cost": 50,
+        "cost_factor": 1.0,
+        "publish_potential": false,
+        "orientation_mode": 1,
+        "orientation_window_size": 3
+      },
+      "SmoothGlobalPlanner": {
+        "source_planner_ns": "GlobalPlanner",
+        "sample_spacing": 0.025,
+        "shortcut_deviation": 0.06,
+        "shortcut_length": 0.8,
+        "preferred_radius": 0.35,
+        "smoothing_clearance": 0.05,
+        "collision_padding": 0.02,
+        "max_compute_ms": 80.0,
+        "max_lateral_adjustment": 0.15,
+        "goal_tangent_length": 0.3,
+        "replan_compute_ms": 250.0,
+        "raw": {
+          "allow_unknown": false,
+          "cost_factor": 1.0,
+          "default_tolerance": 0.05,
+          "lethal_cost": 253,
+          "neutral_cost": 50,
+          "old_navfn_behavior": true,
+          "orientation_mode": 1,
+          "orientation_window_size": 3,
+          "publish_potential": false,
+          "use_dijkstra": true,
+          "use_grid_path": true,
+          "use_quadratic": false
+        }
+      },
+      "global_costmap": {
+        "footprint": "[[0.140278,0.245001],[-0.0564073,0.245001],[-0.0639816,0.242971],[-0.0707706,0.239052],[-0.0765067,0.233316],[-0.116634,0.163813],[-0.151722,0.0328642],[-0.151722,-0.0328642],[-0.116634,-0.163813],[-0.0765067,-0.233316],[-0.0707706,-0.239052],[-0.0639816,-0.242971],[-0.0564073,-0.245001],[0.140278,-0.245001],[0.203041,-0.228184],[0.251784,-0.200042],[0.298029,-0.153797],[0.331332,-0.0961144],[0.34828,-0.0328641],[0.34828,0.0328641],[0.331332,0.0961143],[0.298029,0.153797],[0.251784,0.200042],[0.203041,0.228184]]",
+        "footprint_padding": 0.01,
+        "obstacle_layer": {
+          "enabled": true,
+          "obstacle_range": 4.0,
+          "raytrace_range": 5.0,
+          "footprint_clearing_enabled": true,
+          "max_obstacle_height": 2.0,
+          "observation_sources": "laser_scan",
+          "laser_scan": {
+            "sensor_frame": "laser",
+            "data_type": "LaserScan",
+            "topic": "/scan_obstacles",
+            "marking": true,
+            "clearing": true,
+            "observation_persistence": 0.3,
+            "expected_update_rate": 0.2,
+            "inf_is_valid": true,
+            "obstacle_range": 4.0,
+            "raytrace_range": 5.0,
+            "min_obstacle_height": 0.0,
+            "max_obstacle_height": 2.0
+          },
+          "combination_method": 1
+        },
+        "inflation_layer": {
+          "enabled": true,
+          "cost_scaling_factor": 5.0,
+          "inflation_radius": 0.4,
+          "inflate_unknown": false
+        },
+        "static_layer": {
+          "enabled": true
+        },
+        "global_frame": "map",
+        "robot_base_frame": "base_footprint",
+        "transform_tolerance": 0.3,
+        "update_frequency": 5.0,
+        "publish_frequency": 3.0,
+        "resolution": 0.025,
+        "rolling_window": false,
+        "always_send_full_costmap": true,
+        "plugins": [
+          {
+            "name": "static_layer",
+            "type": "costmap_2d::StaticLayer"
+          },
+          {
+            "name": "corner_clearance_layer",
+            "type": "costmap_2d::StaticLayer"
+          },
+          {
+            "name": "obstacle_layer",
+            "type": "costmap_2d::ObstacleLayer"
+          },
+          {
+            "name": "inflation_layer",
+            "type": "costmap_2d::InflationLayer"
+          }
+        ],
+        "corner_clearance_layer": {
+          "map_topic": "/corner_clearance_map",
+          "first_map_only": true,
+          "subscribe_to_updates": false,
+          "use_maximum": true,
+          "track_unknown_space": true,
+          "trinary_costmap": true,
+          "enabled": true
+        },
+        "width": 10,
+        "height": 10,
+        "origin_x": 0.0,
+        "origin_y": 0.0,
+        "robot_radius": 0.46
+      },
+      "local_costmap": {
+        "footprint": "[[0.140278,0.245001],[-0.0564073,0.245001],[-0.0639816,0.242971],[-0.0707706,0.239052],[-0.0765067,0.233316],[-0.116634,0.163813],[-0.151722,0.0328642],[-0.151722,-0.0328642],[-0.116634,-0.163813],[-0.0765067,-0.233316],[-0.0707706,-0.239052],[-0.0639816,-0.242971],[-0.0564073,-0.245001],[0.140278,-0.245001],[0.203041,-0.228184],[0.251784,-0.200042],[0.298029,-0.153797],[0.331332,-0.0961144],[0.34828,-0.0328641],[0.34828,0.0328641],[0.331332,0.0961143],[0.298029,0.153797],[0.251784,0.200042],[0.203041,0.228184]]",
+        "footprint_padding": 0.01,
+        "obstacle_layer": {
+          "enabled": true,
+          "obstacle_range": 4.0,
+          "raytrace_range": 5.0,
+          "footprint_clearing_enabled": true,
+          "max_obstacle_height": 2.0,
+          "observation_sources": "laser_scan",
+          "laser_scan": {
+            "sensor_frame": "laser",
+            "data_type": "LaserScan",
+            "topic": "/scan_obstacles",
+            "marking": true,
+            "clearing": true,
+            "observation_persistence": 0.3,
+            "expected_update_rate": 0.2,
+            "inf_is_valid": true,
+            "obstacle_range": 4.0,
+            "raytrace_range": 5.0,
+            "min_obstacle_height": 0.0,
+            "max_obstacle_height": 2.0
+          },
+          "combination_method": 1
+        },
+        "inflation_layer": {
+          "enabled": true,
+          "cost_scaling_factor": 7.0,
+          "inflation_radius": 0.1,
+          "inflate_unknown": false
+        },
+        "static_layer": {
+          "enabled": true
+        },
+        "global_frame": "odom",
+        "robot_base_frame": "base_footprint",
+        "transform_tolerance": 0.3,
+        "update_frequency": 12.0,
+        "publish_frequency": 6.0,
+        "width": 4,
+        "height": 4,
+        "resolution": 0.025,
+        "rolling_window": true,
+        "always_send_full_costmap": true,
+        "plugins": [
+          {
+            "name": "corner_clearance_layer",
+            "type": "costmap_2d::StaticLayer"
+          },
+          {
+            "name": "obstacle_layer",
+            "type": "costmap_2d::ObstacleLayer"
+          },
+          {
+            "name": "inflation_layer",
+            "type": "costmap_2d::InflationLayer"
+          }
+        ],
+        "corner_clearance_layer": {
+          "map_topic": "/corner_clearance_map",
+          "first_map_only": true,
+          "subscribe_to_updates": false,
+          "use_maximum": true,
+          "track_unknown_space": false,
+          "trinary_costmap": true,
+          "enabled": true
+        },
+        "origin_x": 0.0,
+        "origin_y": 0.0,
+        "robot_radius": 0.46
+      },
+      "TebLocalPlannerROS": {
+        "odom_topic": "/odom",
+        "map_frame": "odom",
+        "teb_autosize": true,
+        "dt_ref": 0.2,
+        "dt_hysteresis": 0.05,
+        "global_plan_overwrite_orientation": true,
+        "allow_init_with_backwards_motion": false,
+        "max_global_plan_lookahead_dist": 1.6,
+        "global_plan_viapoint_sep": 0.4,
+        "via_points_ordered": true,
+        "feasibility_check_no_poses": 8,
+        "exact_arc_length": true,
+        "publish_feedback": false,
+        "max_vel_x": 1.0,
+        "max_vel_x_backwards": 0.01,
+        "max_vel_y": 0.0,
+        "max_vel_theta": 1.0,
+        "acc_lim_x": 0.65,
+        "acc_lim_y": 0.01,
+        "acc_lim_theta": 1.5,
+        "min_turning_radius": 0.0,
+        "wheelbase": 0.0,
+        "cmd_angle_instead_rotvel": false,
+        "is_footprint_dynamic": false,
+        "xy_goal_tolerance": 0.15,
+        "yaw_goal_tolerance": 0.2,
+        "latch_xy_goal_tolerance": true,
+        "free_goal_vel": false,
+        "footprint_model": {
+          "type": "polygon",
+          "vertices": [
+            [
+              0.140278153,
+              0.245001
+            ],
+            [
+              -0.056407332,
+              0.245001
+            ],
+            [
+              -0.06398156,
+              0.242971492
+            ],
+            [
+              -0.070770555,
+              0.239051863
+            ],
+            [
+              -0.076506663,
+              0.233315756
+            ],
+            [
+              -0.116634234,
+              0.163812763
+            ],
+            [
+              -0.1517218,
+              0.032864185
+            ],
+            [
+              -0.1517218,
+              -0.032864201
+            ],
+            [
+              -0.11663423,
+              -0.163812793
+            ],
+            [
+              -0.076506678,
+              -0.233315752
+            ],
+            [
+              -0.070770588,
+              -0.239051842
+            ],
+            [
+              -0.063981594,
+              -0.242971469
+            ],
+            [
+              -0.056407283,
+              -0.245001
+            ],
+            [
+              0.14027815,
+              -0.245001
+            ],
+            [
+              0.203040853,
+              -0.228183784
+            ],
+            [
+              0.251784475,
+              -0.200041641
+            ],
+            [
+              0.298029454,
+              -0.153796662
+            ],
+            [
+              0.331332336,
+              -0.096114379
+            ],
+            [
+              0.3482802,
+              -0.032864089
+            ],
+            [
+              0.3482802,
+              0.032864073
+            ],
+            [
+              0.33133234,
+              0.096114349
+            ],
+            [
+              0.298029423,
+              0.153796693
+            ],
+            [
+              0.25178447,
+              0.200041646
+            ],
+            [
+              0.203040856,
+              0.228183784
+            ]
+          ]
+        },
+        "min_obstacle_dist": 0.1,
+        "inflation_dist": 0.2,
+        "dynamic_obstacle_inflation_dist": 0.2,
+        "include_costmap_obstacles": true,
+        "include_dynamic_obstacles": false,
+        "costmap_obstacles_behind_robot_dist": 0.6,
+        "obstacle_poses_affected": 20,
+        "legacy_obstacle_association": false,
+        "obstacle_association_force_inclusion_factor": 2.0,
+        "obstacle_association_cutoff_factor": 8.0,
+        "no_inner_iterations": 4,
+        "no_outer_iterations": 3,
+        "optimization_activate": true,
+        "optimization_verbose": false,
+        "penalty_epsilon": 0.005,
+        "weight_max_vel_x": 2.0,
+        "weight_max_vel_theta": 5.0,
+        "weight_acc_lim_x": 1.0,
+        "weight_acc_lim_theta": 5.0,
+        "weight_kinematics_nh": 1000.0,
+        "weight_kinematics_forward_drive": 1000.0,
+        "weight_kinematics_turning_radius": 1.0,
+        "weight_optimaltime": 1.0,
+        "weight_shortest_path": 0.0,
+        "weight_obstacle": 90.0,
+        "weight_inflation": 1.0,
+        "weight_viapoint": 0.5,
+        "weight_adapt_factor": 2.0,
+        "enable_homotopy_class_planning": false,
+        "enable_multithreading": true,
+        "max_number_classes": 1,
+        "selection_cost_hysteresis": 1.0,
+        "selection_prefer_initial_plan": 0.9,
+        "selection_obst_cost_scale": 1.0,
+        "selection_viapoint_cost_scale": 1.0,
+        "selection_alternative_time_cost": false,
+        "roadmap_graph_no_samples": 12,
+        "roadmap_graph_area_width": 2.0,
+        "viapoints_all_candidates": true,
+        "visualize_hc_graph": false,
+        "shrink_horizon_backup": true,
+        "shrink_horizon_min_duration": 5.0,
+        "oscillation_recovery": true,
+        "oscillation_v_eps": 0.05,
+        "oscillation_omega_eps": 0.1,
+        "oscillation_recovery_min_duration": 5.0,
+        "force_reinit_new_goal_dist": 1.0,
+        "force_reinit_new_goal_angular": 0.78,
+        "visualize_with_time_as_z_axis_scale": 0.0,
+        "weight_max_vel_y": 2.0,
+        "weight_acc_lim_y": 1.0,
+        "weight_dynamic_obstacle": 50.0,
+        "weight_dynamic_obstacle_inflation": 0.1,
+        "obstacle_cost_exponent": 1.0,
+        "switching_blocking_period": 0.0,
+        "roadmap_graph_area_length_scale": 1.0,
+        "h_signature_prescaler": 1.0,
+        "h_signature_threshold": 0.1,
+        "obstacle_heading_threshold": 0.45
+      },
+      "base_global_planner": "maze_smooth_planner/SmoothGlobalPlanner",
+      "base_local_planner": "maze_smooth_planner/ForwardTebLocalPlanner",
+      "make_plan_clear_costmap": false,
+      "make_plan_add_unreachable_goal": false,
+      "controller_frequency": 12.0,
+      "planner_frequency": 5.0,
+      "controller_patience": 15.0,
+      "planner_patience": 10.0,
+      "oscillation_timeout": 12.0,
+      "oscillation_distance": 0.05,
+      "shutdown_costmaps": false,
+      "recovery_behavior_enabled": true,
+      "clearing_rotation_allowed": false,
+      "max_planning_retries": -1,
+      "conservative_reset_dist": 3.0,
+      "restore_defaults": false
+    },
+    "/serial_bridge": {
+      "port": "/dev/ttyUSB0",
+      "baud": 115200,
+      "max_v": 1.0,
+      "max_w": 1.0,
+      "cmd_max_v": 1.0,
+      "cmd_max_w": 1.0,
+      "angular_command_sign": -1,
+      "safety_enable": true,
+      "safety_stop_distance": 0.12,
+      "safety_slow_distance": 0.6,
+      "safety_scan_timeout": 0.3,
+      "safety_rear_stop_distance": 0.15,
+      "safety_prediction_time": 0.6,
+      "safety_prediction_step": 0.03,
+      "safety_collision_padding": 0.03,
+      "navigation_allow_reverse": false,
+      "joystick_reverse_max_speed": 0.15,
+      "vehicle_front_x": 0.3482802,
+      "vehicle_rear_x": -0.1517218,
+      "vehicle_half_width": 0.245001,
+      "vehicle_footprint_padding": 0.0,
+      "safety_half_width": 0.27,
+      "laser_x": 0.315,
+      "laser_y": 0.0,
+      "laser_yaw": 0.0,
+      "footprint": [
+        [
+          0.140278153,
+          0.245001
+        ],
+        [
+          -0.056407332,
+          0.245001
+        ],
+        [
+          -0.06398156,
+          0.242971492
+        ],
+        [
+          -0.070770555,
+          0.239051863
+        ],
+        [
+          -0.076506663,
+          0.233315756
+        ],
+        [
+          -0.116634234,
+          0.163812763
+        ],
+        [
+          -0.1517218,
+          0.032864185
+        ],
+        [
+          -0.1517218,
+          -0.032864201
+        ],
+        [
+          -0.11663423,
+          -0.163812793
+        ],
+        [
+          -0.076506678,
+          -0.233315752
+        ],
+        [
+          -0.070770588,
+          -0.239051842
+        ],
+        [
+          -0.063981594,
+          -0.242971469
+        ],
+        [
+          -0.056407283,
+          -0.245001
+        ],
+        [
+          0.14027815,
+          -0.245001
+        ],
+        [
+          0.203040853,
+          -0.228183784
+        ],
+        [
+          0.251784475,
+          -0.200041641
+        ],
+        [
+          0.298029454,
+          -0.153796662
+        ],
+        [
+          0.331332336,
+          -0.096114379
+        ],
+        [
+          0.3482802,
+          -0.032864089
+        ],
+        [
+          0.3482802,
+          0.032864073
+        ],
+        [
+          0.33133234,
+          0.096114349
+        ],
+        [
+          0.298029423,
+          0.153796693
+        ],
+        [
+          0.25178447,
+          0.200041646
+        ],
+        [
+          0.203040856,
+          0.228183784
+        ]
+      ]
+    },
+    "/odom_publisher": {
+      "wheel_diameter": 0.166224818,
+      "wheel_base": 0.408879504,
+      "ticks_per_rev": 4096
+    },
+    "/amcl": {
+      "base_frame_id": "base_footprint",
+      "odom_frame_id": "odom",
+      "global_frame_id": "map",
+      "use_map_topic": true,
+      "min_particles": 300,
+      "max_particles": 1000,
+      "kld_err": 0.05,
+      "update_min_d": 0.02,
+      "update_min_a": 0.02,
+      "resample_interval": 1,
+      "transform_tolerance": 0.3,
+      "recovery_alpha_slow": 0.0,
+      "recovery_alpha_fast": 0.0,
+      "gui_publish_rate": 10.0,
+      "save_pose_rate": 0.5,
+      "initial_pose_x": -0.01171549258915006,
+      "initial_pose_y": 0.0061146804964983415,
+      "initial_pose_a": 0.017414986224990495,
+      "laser_min_range": 0.1,
+      "laser_max_range": 10.0,
+      "laser_model_type": "likelihood_field",
+      "laser_likelihood_max_dist": 2.0,
+      "laser_max_beams": 120,
+      "laser_sigma_hit": 0.05,
+      "force_update_after_initialpose": true,
+      "kld_z": 0.99,
+      "do_beamskip": false,
+      "beam_skip_distance": 0.5,
+      "beam_skip_threshold": 0.3,
+      "tf_broadcast": true,
+      "force_update_after_set_map": false,
+      "first_map_only": false,
+      "laser_z_hit": 0.95,
+      "laser_z_short": 0.1,
+      "laser_z_max": 0.05,
+      "laser_z_rand": 0.05,
+      "laser_lambda_short": 0.1,
+      "odom_model_type": "diff",
+      "odom_alpha1": 0.2,
+      "odom_alpha2": 0.2,
+      "odom_alpha3": 0.2,
+      "odom_alpha4": 0.2,
+      "odom_alpha5": 0.2,
+      "restore_defaults": false,
+      "initial_cov_xx": 7.879096088010294e-06,
+      "initial_cov_yy": 4.1548543417692886e-05,
+      "initial_cov_aa": 2.7691330421814248e-05
+    },
+    "/richbeam_lidar": {
+      "frame_id": "laser",
+      "output_topic": "scan",
+      "inverted": false,
+      "hostip": "192.168.198.1",
+      "sensorip": "192.168.198.2",
+      "port": "2368",
+      "angle_offset": 0,
+      "configure_sensor": false,
+      "scanfreq": "30",
+      "filter": "3",
+      "gain_factor": "10",
+      "filter_threshold": "170",
+      "laser_enable": "true",
+      "scan_range_start": "45",
+      "scan_range_stop": "315"
+    },
+    "/scan_self_filter": {
+      "input_topic": "/scan_raw",
+      "output_topic": "/scan",
+      "laser_x": 0.315,
+      "laser_y": 0.0,
+      "laser_yaw": 0.0,
+      "vehicle_front_x": 0.3482802,
+      "vehicle_rear_x": -0.1517218,
+      "vehicle_half_width": 0.245001,
+      "padding": 0.0,
+      "footprint": [
+        [
+          0.140278153,
+          0.245001
+        ],
+        [
+          -0.056407332,
+          0.245001
+        ],
+        [
+          -0.06398156,
+          0.242971492
+        ],
+        [
+          -0.070770555,
+          0.239051863
+        ],
+        [
+          -0.076506663,
+          0.233315756
+        ],
+        [
+          -0.116634234,
+          0.163812763
+        ],
+        [
+          -0.1517218,
+          0.032864185
+        ],
+        [
+          -0.1517218,
+          -0.032864201
+        ],
+        [
+          -0.11663423,
+          -0.163812793
+        ],
+        [
+          -0.076506678,
+          -0.233315752
+        ],
+        [
+          -0.070770588,
+          -0.239051842
+        ],
+        [
+          -0.063981594,
+          -0.242971469
+        ],
+        [
+          -0.056407283,
+          -0.245001
+        ],
+        [
+          0.14027815,
+          -0.245001
+        ],
+        [
+          0.203040853,
+          -0.228183784
+        ],
+        [
+          0.251784475,
+          -0.200041641
+        ],
+        [
+          0.298029454,
+          -0.153796662
+        ],
+        [
+          0.331332336,
+          -0.096114379
+        ],
+        [
+          0.3482802,
+          -0.032864089
+        ],
+        [
+          0.3482802,
+          0.032864073
+        ],
+        [
+          0.33133234,
+          0.096114349
+        ],
+        [
+          0.298029423,
+          0.153796693
+        ],
+        [
+          0.25178447,
+          0.200041646
+        ],
+        [
+          0.203040856,
+          0.228183784
+        ]
+      ]
+    },
+    "/corner_clearance/map_provider": {
+      "bounds": [],
+      "map_file": "/workspace/field/map.yaml",
+      "mask_file": "",
+      "extra_clearance": 0.05,
+      "include_wall_endpoints": true,
+      "wall_endpoint_radius": 0.05,
+      "minimum_wall_length": 0.25,
+      "minimum_turn_degrees": 45,
+      "scope": "main_walls",
+      "resolved_mask_file": "/workspace/field/.ros/corner_clearance/460c732e36988af1b46dbedf5e7cb6440d18d18385770e38f7d5a0faa56c5daa/overlay.yaml",
+      "corner_count": 15,
+      "endpoint_count": 11,
+      "preparation": "generated"
+    }
+  },
+  "processes": [],
+  "recorded_topics": [
+    "/map",
+    "/corner_clearance_map",
+    "/map_metadata",
+    "/scan",
+    "/scan_obstacles",
+    "/scan_raw",
+    "/scan_self_filtered_count",
+    "/tf",
+    "/tf_static",
+    "/odom",
+    "/wheel_encoder",
+    "/cmd_vel",
+    "/stm32_command_sent",
+    "/stm32_feedback_text",
+    "/control_source",
+    "/safety_stop",
+    "/safety_collision_prediction",
+    "/front_obstacle_distance",
+    "/rear_obstacle_distance",
+    "/nearest_obstacle_radius",
+    "/joystick_lb_pressed",
+    "/move_base/status",
+    "/move_base/goal",
+    "/move_base/current_goal",
+    "/move_base_simple/goal",
+    "/move_base/result",
+    "/move_base/feedback",
+    "/move_base/recovery_status",
+    "/move_base/GlobalPlanner/plan",
+    "/move_base/NavfnROS/plan",
+    "/move_base/TebLocalPlannerROS/global_plan",
+    "/move_base/TebLocalPlannerROS/local_plan",
+    "/move_base/global_costmap/costmap",
+    "/move_base/global_costmap/costmap_updates",
+    "/move_base/global_costmap/footprint",
+    "/move_base/local_costmap/costmap",
+    "/move_base/local_costmap/costmap_updates",
+    "/move_base/local_costmap/footprint",
+    "/amcl_pose",
+    "/initialpose",
+    "/rosout_agg",
+    "/goal_reached",
+    "/goal_detected",
+    "/blue_target/observation",
+    "/move_base/SmoothGlobalPlanner/plan",
+    "/move_base/SmoothGlobalPlanner/raw_plan",
+    "/move_base/SmoothGlobalPlanner/diagnostics",
+    "/blue_autonomy/enable",
+    "/blue_autonomy/state",
+    "/handoff/nav_state",
+    "/handoff/visual_state",
+    "/handoff/cmd_vel_nav",
+    "/handoff/cmd_vel_visual",
+    "/handoff/nav_enable",
+    "/handoff/visual_enable",
+    "/blue_target/map_pose",
+    "/blue_target/approach_goal",
+    "/gimbal/connected",
+    "/gimbal/servo_ready",
+    "/gimbal/searching",
+    "/gimbal/target_locked",
+    "/gimbal/status_text",
+    "/gimbal/joint_states"
+  ]
+}

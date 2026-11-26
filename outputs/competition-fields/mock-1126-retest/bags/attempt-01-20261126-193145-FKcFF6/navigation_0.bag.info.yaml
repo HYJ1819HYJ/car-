@@ -1,0 +1,233 @@
+path: /workspace/recording/navigation_0.bag
+version: 2.0
+duration: 91.743244
+start: 1795692707.766110
+end: 1795692799.509354
+size: 23654542
+messages: 92450
+indexed: True
+compression: lz4
+uncompressed: 138174780
+compressed: 22005174
+types:
+    - type: actionlib_msgs/GoalStatusArray
+      md5: 8b2b82f13216d0a8ea88bd3af735e619
+    - type: geometry_msgs/PolygonStamped
+      md5: c6be8f7dc3bee7fe9e8d296070f53340
+    - type: geometry_msgs/PoseStamped
+      md5: d3812c3cbc69362b77dc0b19b345f8f5
+    - type: geometry_msgs/PoseWithCovarianceStamped
+      md5: 953b798c0f514ff060a53a3498ce6246
+    - type: geometry_msgs/Twist
+      md5: 9f195f881246fdfa2798d1d3eebca84a
+    - type: move_base_msgs/MoveBaseActionFeedback
+      md5: 7d1870ff6e0decea702b943b5af0b42e
+    - type: move_base_msgs/MoveBaseActionGoal
+      md5: 660d6895a1b9a16dce51fbdd9a64a56b
+    - type: move_base_msgs/MoveBaseActionResult
+      md5: 1eb06eeff08fa7ea874431638cb52332
+    - type: nav_msgs/MapMetaData
+      md5: 10cfc8a2818024d3248802c00c95f11b
+    - type: nav_msgs/OccupancyGrid
+      md5: 3381f2d731d4076ec5c71b0759edbe4e
+    - type: nav_msgs/Odometry
+      md5: cd5e73d190d741a2f92e81eda573aca7
+    - type: nav_msgs/Path
+      md5: 6227e2b7e9cce15051f669a5e197bbf7
+    - type: rosgraph_msgs/Log
+      md5: acffd30cd6b6de30f120938c17c593fb
+    - type: sensor_msgs/JointState
+      md5: 3066dcd76a6cfaef579bd0f34173e9fd
+    - type: sensor_msgs/LaserScan
+      md5: 90c7ef2dc6895d81024acba2ac42f369
+    - type: std_msgs/Bool
+      md5: 8b94c1b53db61fb6aed406028ad6332a
+    - type: std_msgs/Float32
+      md5: 73fcbf46b49191e672908e50842a83d4
+    - type: std_msgs/Int16MultiArray
+      md5: d9338d7f523fcb692fae9d0a0e9f067c
+    - type: std_msgs/String
+      md5: 992ce8a1687cec8c8bd883ec73ca41d1
+    - type: std_msgs/UInt32
+      md5: 304a39449588c7f8ce2df6e8001c5fce
+    - type: stm32_bridge/BlueTargetObservation
+      md5: 6ce3e02db51ec129b3a9e8fb2c72ef4d
+    - type: tf2_msgs/TFMessage
+      md5: 94810edda583a504dfda3829e70d7eec
+topics:
+    - topic: /amcl_pose
+      type: geometry_msgs/PoseWithCovarianceStamped
+      messages: 620
+    - topic: /blue_autonomy/enable
+      type: std_msgs/Bool
+      messages: 5
+    - topic: /blue_autonomy/state
+      type: std_msgs/String
+      messages: 22
+    - topic: /blue_target/approach_goal
+      type: geometry_msgs/PoseStamped
+      messages: 5
+    - topic: /blue_target/map_pose
+      type: geometry_msgs/PoseStamped
+      messages: 105
+    - topic: /blue_target/observation
+      type: stm32_bridge/BlueTargetObservation
+      messages: 2752
+    - topic: /cmd_vel
+      type: geometry_msgs/Twist
+      messages: 1325
+    - topic: /control_source
+      type: std_msgs/String
+      messages: 9174
+    - topic: /corner_clearance_map
+      type: nav_msgs/OccupancyGrid
+      messages: 1
+    - topic: /front_obstacle_distance
+      type: std_msgs/Float32
+      messages: 2713
+    - topic: /gimbal/connected
+      type: std_msgs/Bool
+      messages: 181
+    - topic: /gimbal/enabled
+      type: std_msgs/Bool
+      messages: 181
+    - topic: /gimbal/joint_states
+      type: sensor_msgs/JointState
+      messages: 180
+    - topic: /gimbal/searching
+      type: std_msgs/Bool
+      messages: 181
+    - topic: /gimbal/servo_ready
+      type: std_msgs/Bool
+      messages: 181
+    - topic: /gimbal/status_text
+      type: std_msgs/String
+      messages: 330
+    - topic: /gimbal/target_locked
+      type: std_msgs/Bool
+      messages: 181
+    - topic: /goal_detected
+      type: std_msgs/Bool
+      messages: 2752
+    - topic: /goal_reached
+      type: std_msgs/Bool
+      messages: 210
+    - topic: /handoff/cmd_vel_nav
+      type: geometry_msgs/Twist
+      messages: 448
+    - topic: /handoff/cmd_vel_visual
+      type: geometry_msgs/Twist
+      messages: 276
+    - topic: /handoff/nav_enable
+      type: std_msgs/Bool
+      messages: 6
+    - topic: /handoff/nav_state
+      type: std_msgs/String
+      messages: 17
+    - topic: /handoff/visual_enable
+      type: std_msgs/Bool
+      messages: 7
+    - topic: /handoff/visual_state
+      type: std_msgs/String
+      messages: 5
+    - topic: /joystick_lb_pressed
+      type: std_msgs/Bool
+      messages: 9173
+    - topic: /map
+      type: nav_msgs/OccupancyGrid
+      messages: 1
+    - topic: /map_metadata
+      type: nav_msgs/MapMetaData
+      messages: 1
+    - topic: /move_base/GlobalPlanner/plan
+      type: nav_msgs/Path
+      messages: 85
+    - topic: /move_base/SmoothGlobalPlanner/diagnostics
+      type: std_msgs/String
+      messages: 98
+    - topic: /move_base/SmoothGlobalPlanner/plan
+      type: nav_msgs/Path
+      messages: 85
+    - topic: /move_base/SmoothGlobalPlanner/raw_plan
+      type: nav_msgs/Path
+      messages: 98
+    - topic: /move_base/TebLocalPlannerROS/global_plan
+      type: nav_msgs/Path
+      messages: 435
+    - topic: /move_base/TebLocalPlannerROS/local_plan
+      type: nav_msgs/Path
+      messages: 435
+    - topic: /move_base/current_goal
+      type: geometry_msgs/PoseStamped
+      messages: 6
+    - topic: /move_base/feedback
+      type: move_base_msgs/MoveBaseActionFeedback
+      messages: 447
+    - topic: /move_base/global_costmap/costmap
+      type: nav_msgs/OccupancyGrid
+      messages: 221
+    - topic: /move_base/global_costmap/footprint
+      type: geometry_msgs/PolygonStamped
+      messages: 459
+    - topic: /move_base/goal
+      type: move_base_msgs/MoveBaseActionGoal
+      messages: 6
+    - topic: /move_base/local_costmap/costmap
+      type: nav_msgs/OccupancyGrid
+      messages: 445
+    - topic: /move_base/local_costmap/footprint
+      type: geometry_msgs/PolygonStamped
+      messages: 883
+    - topic: /move_base/result
+      type: move_base_msgs/MoveBaseActionResult
+      messages: 6
+    - topic: /move_base/status
+      type: actionlib_msgs/GoalStatusArray
+      messages: 478
+    - topic: /nearest_obstacle_radius
+      type: std_msgs/Float32
+      messages: 2712
+    - topic: /odom
+      type: nav_msgs/Odometry
+      messages: 1400
+    - topic: /rear_obstacle_distance
+      type: std_msgs/Float32
+      messages: 2712
+    - topic: /rosout_agg
+      type: rosgraph_msgs/Log
+      messages: 541
+    - topic: /safety_collision_prediction
+      type: std_msgs/Bool
+      messages: 9172
+    - topic: /safety_stop
+      type: std_msgs/Bool
+      messages: 9173
+    - topic: /scan
+      type: sensor_msgs/LaserScan
+      messages: 2712
+    - topic: /scan_obstacles
+      type: sensor_msgs/LaserScan
+      messages: 2712
+    - topic: /scan_raw
+      type: sensor_msgs/LaserScan
+      messages: 2712
+    - topic: /scan_self_filtered_count
+      type: std_msgs/UInt32
+      messages: 2712
+    - topic: /stm32_command_sent
+      type: geometry_msgs/Twist
+      messages: 9172
+    - topic: /stm32_feedback_text
+      type: std_msgs/String
+      messages: 1400
+    - topic: /tf
+      type: tf2_msgs/TFMessage
+      messages: 8699
+      connections: 3
+    - topic: /tf_static
+      type: tf2_msgs/TFMessage
+      messages: 1
+    - topic: /wheel_encoder
+      type: std_msgs/Int16MultiArray
+      messages: 1400
+
