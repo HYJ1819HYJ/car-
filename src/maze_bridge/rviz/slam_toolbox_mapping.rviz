@@ -9,7 +9,7 @@ Panels:
         - /LaserScan1
         - /Pose Graph1
       Splitter Ratio: 0.5
-    Tree Height: 253
+    Tree Height: 207
   - Class: rviz/Selection
     Name: Selection
   - Class: rviz/Tool Properties
@@ -103,8 +103,6 @@ Visualization Manager:
           Value: true
         odom:
           Value: true
-        usb_cam:
-          Value: true
       Marker Alpha: 1
       Marker Scale: 0.5
       Name: TF
@@ -116,8 +114,6 @@ Visualization Manager:
           odom:
             base_footprint:
               laser:
-                {}
-              usb_cam:
                 {}
       Update Interval: 0
       Value: true
@@ -184,7 +180,7 @@ Visualization Manager:
   Value: true
   Views:
     Current:
-      Angle: -1.6150001287460327
+      Angle: -2.5650038719177246
       Class: rviz/TopDownOrtho
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
@@ -194,7 +190,7 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Scale: 80
+      Scale: 124.3475112915039
       Target Frame: <Fixed Frame>
       X: 0
       Y: 0
@@ -202,10 +198,10 @@ Visualization Manager:
 Window Geometry:
   Displays:
     collapsed: false
-  Height: 1211
+  Height: 1136
   Hide Left Dock: false
   Hide Right Dock: true
-  QMainWindow State: 000000ff00000000fd00000001000000000000049b00000465fc0200000005fb000000100044006900730070006c006100790073010000003b00000188000000c700fffffffb0000001200530065006c0065006300740069006f006e01000001c9000000bf0000005c00fffffffb0000001e0054006f006f006c002000500072006f0070006500720074006900650073010000028e000000be0000005c00fffffffb0000000a005600690065007700730100000352000000fb000000a000fffffffb0000000800540069006d006501000004530000004d0000003700ffffff0000031d0000046500000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  QMainWindow State: 000000ff00000000fd00000001000000000000049b0000040afc0200000005fb000000100044006900730070006c006100790073010000004300000167000000d400fffffffb0000001200530065006c0065006300740069006f006e01000001b0000000b00000006100fffffffb0000001e0054006f006f006c002000500072006f00700065007200740069006500730100000266000000ae0000006100fffffffb0000000a00560069006500770073010000031a000000e6000000b500fffffffb0000000800540069006d00650100000406000000470000004400ffffff0000035f0000040a00000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
   Selection:
     collapsed: false
   Time:
@@ -214,6 +210,6 @@ Window Geometry:
     collapsed: false
   Views:
     collapsed: false
-  Width: 1982
-  X: 66
-  Y: 32
+  Width: 2048
+  X: 0
+  Y: 28
