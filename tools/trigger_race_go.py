@@ -36,11 +36,12 @@ class Race:
         self.state = self.nav_state = ""
         self.last_display = ""
         self.last_phase = ""
-        self.scan_time = self.joint_time = self.odom_time = self.amcl_time = 0.0
+        self.scan_time = self.joint_time = 0.0
+        self.odom_reading = (0.0, False, 0.0)
+        self.amcl_reading = (0.0, math.inf, math.inf, math.inf)
         self.pose_reset_time = 0.0
         self.ready = self.connected = self.reached = False
-        self.odom_still = self.command_still = False
-        self.amcl_error = self.amcl_std = self.amcl_yaw_error = math.inf
+        self.command_still = False
         self.enable = rospy.Publisher("/blue_autonomy/enable", Bool, queue_size=4, tcp_nodelay=True)
         self.initialpose = rospy.Publisher("/initialpose", PoseWithCovarianceStamped,
                                           queue_size=1, tcp_nodelay=True)
@@ -86,17 +87,20 @@ class Race:
 
     def on_odom(self, message):
         twist = message.twist.twist
-        self.odom_still = abs(twist.linear.x) < .025 and abs(twist.angular.z) < .04
-        self.odom_time = time.monotonic()
+        now = time.monotonic()
+        previous_time, was_still, settled_at = self.odom_reading
+        still = math.hypot(twist.linear.x, twist.linear.y) < .025 and abs(twist.angular.z) < .04
+        if still and not was_still and now - previous_time <= .5:
+            settled_at = now
+        self.odom_reading = (now, still, settled_at)
 
     def on_amcl(self, message):
         pose = message.pose.pose
-        self.amcl_error = math.hypot(pose.position.x - self.start["x"],
-                                     pose.position.y - self.start["y"])
+        error = math.hypot(pose.position.x - self.start["x"], pose.position.y - self.start["y"])
         delta = yaw_of(pose.orientation) - self.start["yaw"]
-        self.amcl_yaw_error = abs(math.atan2(math.sin(delta), math.cos(delta)))
-        self.amcl_std = math.sqrt(max(0.0, message.pose.covariance[0], message.pose.covariance[7]))
-        self.amcl_time = time.monotonic()
+        yaw_error = abs(math.atan2(math.sin(delta), math.cos(delta)))
+        std = math.sqrt(max(0.0, message.pose.covariance[0], message.pose.covariance[7]))
+        self.amcl_reading = (time.monotonic(), error, std, yaw_error)
 
     def stop(self, _signum, _frame):
         self.stopping = True
@@ -137,24 +141,48 @@ class Race:
         self.pose_reset_time = time.monotonic()
         self.initialpose.publish(pose)
 
+    def reset_start(self, reason):
+        self.align_start()
+        self.clear()
+        print(f"\r\033[K{reason}，已发布起点复位并清图。", flush=True)
+        self.last_display = ""
+
+    def retry_alignment(self):
+        now = time.monotonic()
+        odom_time, still, settled_at = self.odom_reading
+        amcl_time, error, _, _ = self.amcl_reading
+        if (self.idle() and still and now - odom_time <= .5 and
+                amcl_time > self.pose_reset_time and error > .30 and
+                (settled_at > self.pose_reset_time or now - self.pose_reset_time >= 1.5)):
+            self.reset_start("定位偏离起点，自动复位")
+
     def status(self, ready_line):
         now = time.monotonic()
         scan_ok = now - self.scan_time <= .5
         gimbal_ok = self.connected and self.ready and now - self.joint_time <= 1.5
-        localized = (self.amcl_time > self.pose_reset_time and self.amcl_error <= .30 and
-                     self.amcl_std <= .30 and self.amcl_yaw_error <= .35)
-        stationary = self.odom_still and now - self.odom_time <= .5
-        ready = scan_ok and gimbal_ok and localized and stationary and self.idle()
+        amcl_time, amcl_error, amcl_std, yaw_error = self.amcl_reading
+        localized = (amcl_time > self.pose_reset_time and amcl_error <= .30 and
+                     amcl_std <= .30 and yaw_error <= .35)
+        odom_time, odom_still, _ = self.odom_reading
+        stationary = odom_still and now - odom_time <= .5
+        missing = [reason for ok, reason in (
+            (scan_ok, "雷达无有效数据"),
+            (gimbal_ok, "云台未就绪"),
+            (localized, "定位未收敛"),
+            (stationary, "车未停稳" if now - odom_time <= .5 else "里程计无实时数据"),
+            (self.idle(), "底盘未进入待命"),
+        ) if not ok]
+        ready = not missing
         if ready_line:
             text = (f"[{'READY' if ready else '等待'}] 雷达:{'OK' if scan_ok else '--'} | "
-                    f"云台:{'OK' if gimbal_ok else '--'} | AMCL误差:{self.amcl_error:.2f}m | "
+                    f"云台:{'OK' if gimbal_ok else '--'} | AMCL误差:{amcl_error:.2f}m | "
                     f"录包:{self.recording.name}")
-            if ready:
-                text += " | 敲击 [Enter / 空格] 发车"
+            text += " | 敲击 [Enter / 空格] 发车" if ready else " | " + " / ".join(missing)
+            text += " | [r] 复位起点并清图"
             if text != self.last_display:
                 print(f"\r\033[K{text}", end="", flush=True)
                 self.last_display = text
-        return ready, stationary
+        return ready
 
     def run(self):
         rospy.wait_for_service("/move_base/clear_costmaps", timeout=8)
@@ -174,32 +202,32 @@ class Race:
 
         fd = sys.stdin.fileno()
         original = termios.tcgetattr(fd)
-        realigned = False
         fired = False
         try:
             tty.setcbreak(fd)
             termios.tcflush(fd, termios.TCIFLUSH)
             while self.alive() and not fired:
-                ready, stationary = self.status(True)
-                if (stationary and not realigned and self.amcl_time > self.pose_reset_time and
-                        self.amcl_error > .30 and time.monotonic() - self.pose_reset_time > .5):
-                    self.align_start()
-                    realigned = True
-                    ready = False
-                if not select.select([fd], [], [], .05)[0]:
-                    continue
-                key = os.read(fd, 1)
-                if not key:
-                    return
-                if key in (b" ", b"\r", b"\n") and ready and self.status(False)[0] and self.alive():
-                    start = time.monotonic()
-                    self.clear()
-                    if not self.alive():
-                        break
-                    self.enable.publish(True)
-                    fired = True
-                    elapsed = 1000 * (time.monotonic() - start)
-                    print(f"\r\033[K已发布发车信号，清图与发布耗时 {elapsed:.1f} ms。", flush=True)
+                self.status(True)
+                if select.select([fd], [], [], .05)[0]:
+                    key = os.read(fd, 1)
+                    if not key or not self.alive():
+                        return
+                    if key in (b"r", b"R"):
+                        if self.idle():
+                            self.reset_start("手动复位")
+                        continue
+                    if key in (b" ", b"\r", b"\n") and self.status(False):
+                        start = time.monotonic()
+                        self.clear()
+                        if not self.alive():
+                            break
+                        if self.status(False):
+                            self.enable.publish(True)
+                            fired = True
+                            elapsed = 1000 * (time.monotonic() - start)
+                            print(f"\r\033[K已发布发车信号，清图与发布耗时 {elapsed:.1f} ms。", flush=True)
+                        continue
+                self.retry_alignment()
         finally:
             termios.tcsetattr(fd, termios.TCSANOW, original)
             if not fired:
@@ -215,8 +243,9 @@ class Race:
                 print(self.state, flush=True)
                 self.last_phase = phase
             now = time.monotonic()
-            if (phase == "COMPLETE" and self.reached and self.command_still and self.odom_still and
-                    now - self.odom_time <= .5):
+            odom_time, odom_still, _ = self.odom_reading
+            if (phase == "COMPLETE" and self.reached and self.command_still and odom_still and
+                    now - odom_time <= .5):
                 if still_since is None:
                     still_since = now
                 elapsed = min(3, int(now - still_since))

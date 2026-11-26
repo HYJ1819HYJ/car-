@@ -61,8 +61,8 @@
     <arg name="blue_reject_vertical_stripes" value="true"/>
     <arg name="blue_v_min" value="55"/>
     <arg name="blue_fill_ratio" value="0.38"/>
-    <arg name="blue_min_pixel_width" value="5"/>
-    <arg name="blue_min_pixel_height" value="7"/>
+    <arg name="blue_min_pixel_width" value="7"/>
+    <arg name="blue_min_pixel_height" value="11"/>
     <arg name="fallback_hfov_deg" value="88.0"/>
     <arg name="black_line_enabled" value="false"/>
   </include>
@@ -78,7 +78,7 @@
     <param name="origin_start_x" value="$(arg initial_pose_x)"/>
     <param name="origin_start_y" value="$(arg initial_pose_y)"/>
     <param name="fallback_hfov_deg" value="88.0"/>
-    <param name="min_pixel_height" value="7"/>
+    <param name="min_pixel_height" value="11"/>
     <param name="target_sample_count" value="4"/>
     <param name="target_sample_max_age" value="0.8"/>
     <param name="target_max_stddev" value="0.25"/>

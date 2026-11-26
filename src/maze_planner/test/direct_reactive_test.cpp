@@ -120,6 +120,45 @@ TEST(ParkingStop, ChecksRotatedFootprintBeforeAcceptingMetricFallback) {
   EXPECT_TRUE(maze_planner::parkingStopReached(input, p));
 }
 
+TEST(DirectReactive, AlignChecksRequestedTurnWithoutSweepingPastIt) {
+  maze_planner::ReactiveParameters p;
+  p.terminal_only = true;
+  p.max_turn = .50;
+  p.turn_gain = 4.0;
+  auto input = visible(.18, .16);
+  input.obstacles = {{.15, .35}};
+  EXPECT_FALSE(maze_planner::reactivePathClear(input, 0.0, .50, 1.0));
+  auto command = maze_planner::reactiveVisualCommand(input, p, 0, 1);
+  EXPECT_STREQ(command.state, "ALIGN");
+  EXPECT_DOUBLE_EQ(command.w, .50);
+
+  input.obstacles.push_back({.32, .29});
+  command = maze_planner::reactiveVisualCommand(input, p, 0, 1);
+  EXPECT_STREQ(command.state, "BLOCKED");
+  EXPECT_DOUBLE_EQ(command.w, 0.0);
+}
+
+TEST(DirectReactive, ApproachSweepsToStopDepthAndStillBlocksNearbyObstacles) {
+  maze_planner::ReactiveParameters p;
+  p.terminal_only = true;
+  p.turn_gain = 0.0;
+  auto input = visible(.01, .09);
+  input.wall_valid = true;
+  input.wall_marker = {.485, .18};
+  input.wall_outward = {-1.0, 0.0};
+  input.target_front_distance = .137;
+  input.obstacles = {{.395, 0.0}};
+  EXPECT_FALSE(maze_planner::reactivePathClear(input, .04, 0.0, .60));
+  auto command = maze_planner::reactiveVisualCommand(input, p, 0, 1);
+  EXPECT_STREQ(command.state, "APPROACH");
+  EXPECT_GT(command.v, 0.0);
+
+  input.obstacles.push_back({.381, 0.0});
+  command = maze_planner::reactiveVisualCommand(input, p, 0, 1);
+  EXPECT_STREQ(command.state, "BLOCKED");
+  EXPECT_DOUBLE_EQ(command.v, 0.0);
+}
+
 int main(int argc, char** argv) {
   testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();

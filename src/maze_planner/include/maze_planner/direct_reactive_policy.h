@@ -11,6 +11,8 @@
 
 namespace maze_planner {
 
+constexpr double kDirectControlPeriod = .05;
+
 struct ReactiveParameters {
   double max_speed{0.10};
   double min_approach_speed{0.10};
@@ -167,8 +169,12 @@ inline ReactiveCommand reactiveVisualCommand(const ReactiveInput& input,
     result.state = "ALIGN";
     const double align_target =
         final_yaw_align ? normal_yaw : (visual_align ? input.bearing : steer_bearing);
-    const double turn = clipped(p.turn_gain*align_target, p.max_turn);
-    if (reactivePathClear(input, 0.0, turn, 1.0)) result.w = turn;
+    const double min_sweep = .20;
+    const double turn = clipped(p.turn_gain*align_target,
+                                std::min(p.max_turn, std::abs(align_target) / min_sweep));
+    const double duration = turn == 0.0 ? 0.0 :
+        std::max(min_sweep, std::min(.55, std::abs(align_target / turn)));
+    if (reactivePathClear(input, 0.0, turn, duration)) result.w = turn;
     else result.state = "BLOCKED";
     return result;
   }
@@ -227,7 +233,15 @@ inline ReactiveCommand reactiveVisualCommand(const ReactiveInput& input,
   result.v = drive_speed;
   result.w = clipped(p.turn_gain*steer_bearing, p.max_turn);
   result.state = "APPROACH";
-  if (p.terminal_only && !reactivePathClear(input, result.v, result.w, .60)) {
+  double duration = .60;
+  if (p.terminal_only && input.wall_valid && result.v > 0.0) {
+    // Wall-normal progress cannot exceed the commanded travel distance.
+    // Keep a full control period inside the predicted path even at the depth limit.
+    const double remaining = wall_depth - p.metric_stop_depth_min;
+    result.v = std::min(result.v, remaining / kDirectControlPeriod);
+    duration = std::min(duration, remaining / result.v);
+  }
+  if (p.terminal_only && !reactivePathClear(input, result.v, result.w, duration)) {
     result.v = result.w = 0.0;
     result.state = "BLOCKED";
   }

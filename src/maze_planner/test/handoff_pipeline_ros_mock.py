@@ -182,6 +182,8 @@ class Simulation:
         self.nav_state = ""
         self.goal_time = None
         self.reset_seen = False
+        self.reset_times = []
+        self.terminal_events = []
         self.phases, self.goals = [], []
         self.footprint = np.array(rospy.get_param("/robot_geometry/footprint"), dtype=np.float32)
         self.map_pub = rospy.Publisher("/map", OccupancyGrid, queue_size=1, latch=True)
@@ -261,8 +263,10 @@ class Simulation:
         label = message.data.partition(":")[0]
         if not self.phases or self.phases[-1] != label:
             self.phases.append(label)
-        if label == "TERMINAL_PARK" and self.first_handoff is None:
-            self.first_handoff = tuple(self.pose)
+        if label == "TERMINAL_PARK":
+            self.terminal_events.append((message.data, tuple(self.pose)))
+            if self.first_handoff is None:
+                self.first_handoff = tuple(self.pose)
 
     def on_nav_state(self, message):
         self.nav_state = message.data
@@ -277,8 +281,9 @@ class Simulation:
         p = message.pose.pose.position
         self.pose = (p.x, p.y, yaw_of(message.pose.pose.orientation))
         self.reset_seen = True
+        self.reset_times.append(time.monotonic())
 
-    def simulate(self, step, marker, boxes, box_edges):
+    def simulate(self, step, marker, boxes, box_edges, odom_v=None, amcl_bias=0.0):
         x, y, yaw = self.pose
         v, w = self.command if time.monotonic() - self.command_time < .25 else (0.0, 0.0)
         middle = yaw + step*w/2
@@ -294,11 +299,14 @@ class Simulation:
         odom.header.stamp, odom.header.frame_id, odom.child_frame_id = stamp, "odom", "base_footprint"
         odom.pose.pose.position.x, odom.pose.pose.position.y = x, y
         odom.pose.pose.orientation = tf.transform.rotation
-        odom.twist.twist.linear.x, odom.twist.twist.angular.z = v, w
+        odom.twist.twist.linear.x = v if odom_v is None else odom_v
+        odom.twist.twist.angular.z = w
         self.odom.publish(odom)
         pose = PoseWithCovarianceStamped()
         pose.header.stamp, pose.header.frame_id = stamp, "map"
-        pose.pose = odom.pose
+        pose.pose.pose.position.x = x + amcl_bias
+        pose.pose.pose.position.y = y
+        pose.pose.pose.orientation = tf.transform.rotation
         pose.pose.covariance[0] = pose.pose.covariance[7] = .02**2
         self.amcl.publish(pose)
 
@@ -362,11 +370,49 @@ class Simulation:
             if terminal is not None:
                 terminal.close()
 
+    def check_prestart_resets(self, terminal, marker, boxes, box_edges, rate):
+        def publish(odom_v=0.0, amcl_bias=0.0):
+            self.simulate(0.0, marker, boxes, box_edges, odom_v=odom_v, amcl_bias=amcl_bias)
+            rate.sleep()
+
+        def wait_for_reset(previous, timeout, amcl_bias=0.0):
+            deadline = time.monotonic() + timeout
+            while len(self.reset_times) == previous and time.monotonic() < deadline:
+                publish(amcl_bias=amcl_bias)
+            assert len(self.reset_times) == previous + 1, terminal.read()
+            assert self.state.startswith("IDLE:"), self.state
+
+        initial = len(self.reset_times)
+        for _ in range(8):
+            publish(.10, .45)
+        terminal.trigger(b" ")
+        for _ in range(5):
+            publish(.10, .45)
+        assert len(self.reset_times) == initial and self.state.startswith("IDLE:")
+        transcript = terminal.read()
+        assert "车未停稳" in transcript and "定位未收敛" in transcript, transcript
+
+        wait_for_reset(initial, .9, .45)  # Moving then stationary permits an immediate retry.
+        stopped_reset = self.reset_times[-1]
+        wait_for_reset(initial + 1, 2.5, .45)  # Persistent bias triggers a second retry.
+        assert self.reset_times[-1] - stopped_reset >= 1.45
+        terminal.trigger(b"r")
+        wait_for_reset(initial + 2, .8)
+        for _ in range(9):
+            publish()
+        transcript = terminal.read()
+        assert transcript.count("定位偏离起点，自动复位") == 2, transcript
+        assert "手动复位，已发布起点复位并清图" in transcript, transcript
+        assert "[READY]" in transcript.rsplit("\r\033[K", 1)[-1], transcript
+        print("Verified pre-start retry after motion, cooldown retry, r reset and readiness gate.",
+              flush=True)
+
     def attempt(self, name, index, marker, normal, boxes, timeout, terminal):
         self.first_handoff = None
         self.dropout_samples = 0
         self.observe_positions = []
         self.phases.clear()
+        self.terminal_events.clear()
         self.goals.clear()
         self.reset_seen = False
         collisions = 0
@@ -401,7 +447,10 @@ class Simulation:
                 self.simulate(0.0, marker, boxes, box_edges)
                 rate.sleep()
             assert self.reset_seen and self.pose == START
+            if index == 1:
+                self.check_prestart_resets(terminal, marker, boxes, box_edges, rate)
             terminal.trigger(b" " if index == 1 else b"\n")
+        resets_before_race = len(self.reset_times)
         started = last = time.monotonic()
         first_approach = None
         still = 0.0
@@ -414,6 +463,8 @@ class Simulation:
                 crossings.append(abs(self.pose[1]))
             if self.state.startswith("TARGET_APPROACH:") and first_approach is None:
                 first_approach = tuple(self.pose)
+                if terminal is not None:
+                    terminal.trigger(b"r\n")
             if self.reached:
                 if self.command != (0.0, 0.0):
                     raise AssertionError("nonzero velocity after completion")
@@ -434,9 +485,10 @@ class Simulation:
                       side_clearance=min(crossings) if crossings else None,
                       first_approach=first_approach, handoff_distance=handoff_distance,
                       observed=self.observe_positions, still_seconds=still,
-                      dropout_samples=self.dropout_samples)
+                      dropout_samples=self.dropout_samples, terminal_events=self.terminal_events)
         print(json.dumps(report), flush=True)
         assert collisions == 0, "physical footprint touched a wall or box"
+        assert len(self.reset_times) == resets_before_race, "localization reset after launch"
         assert self.reached and still >= 3.0, "terminal completion or three-second zero hold missing"
         assert 0 <= min(depth) and max(depth) <= .80 and max(abs(lateral)) <= .40, "outside finish"
         expected = ["EXPLORE", "TARGET_APPROACH", "TERMINAL_PARK", "COMPLETE"]
@@ -444,6 +496,9 @@ class Simulation:
         assert [self.phases.index(label) for label in expected] == sorted(
             self.phases.index(label) for label in expected)
         assert handoff_distance is not None and handoff_distance <= 1.34
+        if name == "corner":
+            assert self.phases.count("TERMINAL_PARK") == 1, "corner handoff bounced back to navigation"
+            assert not any("BLOCKED" in event for event, _ in self.terminal_events)
         if name == "box":
             assert 1.10 < first_approach[0] < 5.10 and crossings and min(crossings) > .45
             assert self.dropout_samples > 0

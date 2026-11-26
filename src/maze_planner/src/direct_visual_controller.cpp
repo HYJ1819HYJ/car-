@@ -75,7 +75,7 @@ class DirectVisualController {
     enable_sub_ = nh_.subscribe("/blue_autonomy/enable", 2, &DirectVisualController::enableCb, this);
     publishGoal(false);
     publishState(enabled_ ? "WAIT: sensor data" : "IDLE: direct control disabled");
-    timer_ = nh_.createTimer(ros::Duration(0.05), &DirectVisualController::timerCb, this);
+    timer_ = nh_.createTimer(ros::Duration(maze_planner::kDirectControlPeriod), &DirectVisualController::timerCb, this);
   }
 
  private:

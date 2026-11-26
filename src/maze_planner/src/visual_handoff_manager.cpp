@@ -244,6 +244,12 @@ class VisualHandoffManager {
       *reason = "outside the short-range terminal corridor";
       return false;
     }
+    // Close to a corner, the ray to the marker can be clear before the base
+    // has turned off the side wall. Leave that turn to move_base.
+    if (competition_mode_ && std::abs(maze_planner::parkingYaw(wall)) > .30) {
+      *reason = "waiting for move_base to align with the finish wall";
+      return false;
+    }
     // The same swept-body and observed-ray check also governs the entrance
     // fallback. Arriving at a navigation goal never proves the corridor clear.
     return maze_planner::handoffCorridorClear(scan_, obstacles, footprint_,
