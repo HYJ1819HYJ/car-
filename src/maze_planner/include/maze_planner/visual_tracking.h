@@ -24,6 +24,12 @@ inline bool visualBearing(double pan, double tilt, double center_x, double cente
   return true;
 }
 
+inline bool plausibleTargetHeight(double camera_z, double slant_range, double down_angle,
+                                  double min_z, double max_z) {
+  const double z = camera_z - slant_range * std::sin(down_angle);
+  return std::isfinite(z) && z >= min_z && z <= max_z;
+}
+
 inline bool visualStopReached(bool detected, double contour_ratio, double bearing,
                               double required_ratio, double facing_tolerance) {
   // ROS observations carry the area in float32; allow its representation

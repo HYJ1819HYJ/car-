@@ -46,6 +46,7 @@ class DirectVisualController {
     pnh_.param<double>("scan_timeout", scan_timeout_, 0.5);
     pnh_.param<double>("observation_timeout", observation_timeout_, 0.5);
     pnh_.param<double>("joint_timeout", joint_timeout_, 1.5);
+    pnh_.param<double>("gimbal_max_skew", gimbal_max_skew_, .55);
 
     params_.max_speed = std::max(0.0, params_.max_speed);
     params_.max_turn = std::max(0.0, params_.max_turn);
@@ -185,7 +186,7 @@ class DirectVisualController {
       fy = fx;
     }
     double pan = 0.0, tilt = 0.0;
-    if (require_gimbal_ && !gimbal_history_.angles(observation_.header.stamp, &pan, &tilt))
+    if (require_gimbal_ && !gimbal_history_.angles(observation_.header.stamp, &pan, &tilt, gimbal_max_skew_))
       return false;
     if (!maze_planner::visualBearing(pan, tilt, observation_.center_x,
                                       observation_.center_y, cx, cy, fx, fy, bearing))
@@ -322,6 +323,7 @@ class DirectVisualController {
   maze_planner::Point2 odom_position_, cached_marker_, cached_normal_;
   ros::Time odom_time_, search_start_, cached_wall_time_, last_wall_scan_time_;
   maze_planner::GimbalHistory gimbal_history_;
+  double gimbal_max_skew_{.55};
   int avoid_side_{0}, search_side_{1};
   std::string state_;
 };

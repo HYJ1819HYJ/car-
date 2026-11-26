@@ -10,6 +10,7 @@ import select
 import signal
 import sys
 import termios
+import threading
 import time
 import tty
 
@@ -18,7 +19,7 @@ from geometry_msgs.msg import PoseWithCovarianceStamped, Twist
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import JointState, LaserScan
 from std_msgs.msg import Bool, String
-from std_srvs.srv import Empty
+from std_srvs.srv import Empty, Trigger
 
 
 def yaw_of(q):
@@ -36,11 +37,14 @@ class Race:
         self.state = self.nav_state = ""
         self.last_display = ""
         self.last_phase = ""
-        self.scan_time = self.joint_time = 0.0
+        self.scan_time = 0.0
+        self.joint_reading = (0.0, math.nan)
         self.odom_reading = (0.0, False, 0.0)
         self.amcl_reading = (0.0, math.inf, math.inf, math.inf)
         self.pose_reset_time = 0.0
         self.ready = self.connected = self.reached = False
+        self.gimbal_enabled = self.gimbal_locked = False
+        self.center_thread = None
         self.command_still = False
         self.enable = rospy.Publisher("/blue_autonomy/enable", Bool, queue_size=4, tcp_nodelay=True)
         self.initialpose = rospy.Publisher("/initialpose", PoseWithCovarianceStamped,
@@ -57,6 +61,8 @@ class Race:
             rospy.Subscriber("/gimbal/joint_states", JointState, self.on_joint, queue_size=1),
             rospy.Subscriber("/gimbal/connected", Bool, self.on_connected, queue_size=1),
             rospy.Subscriber("/gimbal/servo_ready", Bool, self.on_ready, queue_size=1),
+            rospy.Subscriber("/gimbal/enabled", Bool, self.on_enabled, queue_size=1),
+            rospy.Subscriber("/gimbal/target_locked", Bool, self.on_locked, queue_size=1),
         ]
 
     def on_state(self, message):
@@ -76,14 +82,35 @@ class Race:
             self.scan_time = time.monotonic()
 
     def on_joint(self, message):
-        if "camera_pan_joint" in message.name:
-            self.joint_time = time.monotonic()
+        joints = dict(zip(message.name, message.position))
+        tilt = joints.get("camera_tilt_joint", math.nan)
+        if "camera_pan_joint" in joints and math.isfinite(tilt):
+            self.joint_reading = (time.monotonic(), tilt)
 
     def on_connected(self, message):
         self.connected = message.data
 
     def on_ready(self, message):
         self.ready = message.data
+
+    def on_enabled(self, message):
+        self.gimbal_enabled = message.data
+
+    def on_locked(self, message):
+        self.gimbal_locked = message.data
+
+    def request_gimbal_center(self):
+        def center():
+            try:
+                rospy.wait_for_service("/gimbal/center", timeout=.25)
+                if self.alive():
+                    rospy.ServiceProxy("/gimbal/center", Trigger)()
+            except (rospy.ROSException, rospy.ServiceException):
+                pass
+
+        if self.center_thread is None or not self.center_thread.is_alive():
+            self.center_thread = threading.Thread(target=center, daemon=True)
+            self.center_thread.start()
 
     def on_odom(self, message):
         twist = message.twist.twist
@@ -159,7 +186,20 @@ class Race:
     def status(self, ready_line):
         now = time.monotonic()
         scan_ok = now - self.scan_time <= .5
-        gimbal_ok = self.connected and self.ready and now - self.joint_time <= 1.5
+        joint_time, tilt_rad = self.joint_reading
+        tilt_deg = math.degrees(tilt_rad)
+        gimbal_issue = ""
+        if not self.connected:
+            gimbal_issue = "云台未连接"
+        elif not self.ready:
+            gimbal_issue = "云台舵机未就绪"
+        elif not self.gimbal_enabled:
+            gimbal_issue = "云台未使能(mode=0)"
+        elif now - joint_time > 1.5:
+            gimbal_issue = "云台角度无实时数据"
+        elif not self.gimbal_locked and abs(tilt_deg) > 4.0:
+            gimbal_issue = f"云台未平视(tilt={tilt_deg:.1f}°)"
+        gimbal_status = "--" if gimbal_issue else f"OK (enabled, tilt={tilt_deg:.1f}°)"
         amcl_time, amcl_error, amcl_std, yaw_error = self.amcl_reading
         localized = (amcl_time > self.pose_reset_time and amcl_error <= .30 and
                      amcl_std <= .30 and yaw_error <= .35)
@@ -167,7 +207,7 @@ class Race:
         stationary = odom_still and now - odom_time <= .5
         missing = [reason for ok, reason in (
             (scan_ok, "雷达无有效数据"),
-            (gimbal_ok, "云台未就绪"),
+            (not gimbal_issue, gimbal_issue),
             (localized, "定位未收敛"),
             (stationary, "车未停稳" if now - odom_time <= .5 else "里程计无实时数据"),
             (self.idle(), "底盘未进入待命"),
@@ -175,7 +215,7 @@ class Race:
         ready = not missing
         if ready_line:
             text = (f"[{'READY' if ready else '等待'}] 雷达:{'OK' if scan_ok else '--'} | "
-                    f"云台:{'OK' if gimbal_ok else '--'} | AMCL误差:{amcl_error:.2f}m | "
+                    f"云台:{gimbal_status} | AMCL误差:{amcl_error:.2f}m | "
                     f"录包:{self.recording.name}")
             text += " | 敲击 [Enter / 空格] 发车" if ready else " | " + " / ".join(missing)
             text += " | [r] 复位起点并清图"
@@ -214,6 +254,7 @@ class Race:
                         return
                     if key in (b"r", b"R"):
                         if self.idle():
+                            self.request_gimbal_center()
                             self.reset_start("手动复位")
                         continue
                     if key in (b" ", b"\r", b"\n") and self.status(False):

@@ -25,6 +25,7 @@
 #include <maze_planner/search_waypoint_order.h>
 #include <maze_planner/corridor_explorer.h>
 #include <maze_planner/gimbal_history.h>
+#include <maze_planner/finish_target_verification.h>
 #include <maze_planner/navigation_grid.h>
 #include <XmlRpcException.h>
 #include <XmlRpcValue.h>
@@ -92,6 +93,12 @@ class BlueGoalNavigator {
     pnh_.param<bool>("require_camera_info", require_camera_info_, false);
     pnh_.param<std::string>("map_frame", map_frame_, "map");
     pnh_.param<std::string>("base_frame", base_frame_, "base_footprint");
+    pnh_.param<double>("camera_z", camera_z_, 0.42);
+    pnh_.param<double>("min_target_z", min_target_z_, 0.02);
+    pnh_.param<double>("max_target_z", max_target_z_, 0.72);
+    pnh_.param<double>("gimbal_max_skew", gimbal_max_skew_, 0.55);
+    pnh_.param<double>("planner_collision_padding", planner_collision_padding_, 0.025);
+    planner_collision_padding_ = std::max(0.0, planner_collision_padding_);
     pnh_.param<double>("camera_x", camera_x_, 0.145);
     pnh_.param<double>("camera_y", camera_y_, 0.0);
     pnh_.param<double>("paper_height", paper_height_, 0.297);
@@ -165,6 +172,10 @@ class BlueGoalNavigator {
     if (competition_mode_) {
       costmap_sub_ = nh_.subscribe("/move_base/global_costmap/costmap", 1,
                                   &BlueGoalNavigator::costmapCb, this);
+      planner_diagnostics_sub_ = nh_.subscribe("/move_base/SmoothGlobalPlanner/diagnostics", 1,
+          &BlueGoalNavigator::plannerDiagnosticsCb, this);
+      validated_observation_pub_ =
+          nh_.advertise<stm32_bridge::BlueTargetObservation>("/blue_target/validated_observation", 2);
       observe_cmd_pub_ = nh_.advertise<geometry_msgs::Twist>("/handoff/cmd_vel_nav", 1);
       terminal_sub_ = nh_.subscribe("/handoff/visual_enable", 1,
                                     &BlueGoalNavigator::terminalCb, this);
@@ -212,6 +223,7 @@ class BlueGoalNavigator {
     double x{0.0};
     double y{0.0};
     double range{0.0};
+    double contour_ratio{0.0};
     ros::Time stamp;
     maze_planner::Point2 outward;
     bool wall_valid{false};
@@ -452,6 +464,9 @@ class BlueGoalNavigator {
       course_index_ = 0;
       explorer_started_ = false;
       rejected_entrances_.clear();
+      verification_.reset();
+      have_entrance_goal_ = false;
+      false_targets_.clear();
       estimates_.clear();
       target_visible_ = false;
       target_pose_valid_ = false;
@@ -460,7 +475,6 @@ class BlueGoalNavigator {
       last_search_check_ = ros::Time(0);
       entrance_unavailable_since_ = ros::Time();
       target_reacquire_after_ = ros::Time();
-      arrival_time_ = ros::Time();
       pending_observation_.reset();
       current_goal_is_course_ = false;
       current_visual_standoff_ = visual_approach_standoff_;
@@ -528,9 +542,24 @@ class BlueGoalNavigator {
 
   bool robotPose(double* x, double* y, double* yaw, const ros::Time& stamp = ros::Time(0)) {
     try {
-      const geometry_msgs::TransformStamped transform =
-          tf_buffer_.lookupTransform(map_frame_, base_frame_, stamp,
-                                     ros::Duration(stamp.isZero() ? .05 : 0.0));
+      geometry_msgs::TransformStamped transform;
+      try {
+        transform = tf_buffer_.lookupTransform(map_frame_, base_frame_, stamp,
+                                               ros::Duration(stamp.isZero() ? .05 : 0.0));
+      } catch (const tf2::ExtrapolationException&) {
+        const auto near_now = [&]() {
+          return !stamp.isZero() && std::abs((ros::Time::now() - stamp).toSec()) < .05;
+        };
+        if (!near_now()) throw;
+        try {
+          transform = tf_buffer_.lookupTransform(map_frame_, base_frame_, stamp, ros::Duration(.03));
+        } catch (const tf2::ExtrapolationException&) {
+          if (!near_now()) throw;
+          transform = tf_buffer_.lookupTransform(map_frame_, base_frame_, ros::Time(0));
+          if (!transform.header.stamp.isZero() &&
+              std::abs((stamp - transform.header.stamp).toSec()) >= .05) throw;
+        }
+      }
       *x = transform.transform.translation.x;
       *y = transform.transform.translation.y;
       *yaw = yawFromQuaternion(transform.transform.rotation);
@@ -588,6 +617,12 @@ class BlueGoalNavigator {
       target_visible_ = false;
       return;
     }
+    if (competition_mode_) {
+      if (enabled_ && !terminal_active_ && msg->header.stamp >= mission_enable_time_ &&
+          msg->header.stamp >= target_reacquire_after_)
+        pending_observation_ = msg;
+      return;
+    }
     target_visible_ = msg->detected;
     if (!msg->detected) return;
     latest_observation_ = *msg;
@@ -595,17 +630,9 @@ class BlueGoalNavigator {
     last_target_seen_time_ = ros::Time::now();
     if (!enabled_ || state_ == State::COMPLETE) return;
 
-    if (competition_mode_) {
-      if (msg->header.stamp >= mission_enable_time_ &&
-          msg->header.stamp >= target_reacquire_after_ && !terminal_active_)
-        pending_observation_ = msg;
-      return;
-    }
-
     // 已经连续确认蓝纸时先停车获取稳定观测，避免云台锁定期间底盘仍在
     // 沿搜索路径运动。之后只有锁定且位置样本稳定才会发送接近目标。
-    if (!competition_mode_ && (state_ == State::SEARCH || state_ == State::OBSERVE ||
-        state_ == State::LINE_SCAN)) {
+    if (state_ == State::SEARCH || state_ == State::OBSERVE || state_ == State::LINE_SCAN) {
       if (goal_active_) move_base_.cancelGoal();
       goal_active_ = false;
       goal_kind_ = GoalKind::NONE;
@@ -624,14 +651,21 @@ class BlueGoalNavigator {
     // Visual following uses the measured pan and the current image offset even
     // while the firmware's lock flag flickers; estimateTarget still requires a
     // fresh joint reading when a gimbal is configured.
-    if (!competition_mode_ && require_gimbal_ && !gimbal_locked_ && !visual_tracking_parking_enabled_) return;
+    if (require_gimbal_ && !gimbal_locked_ && !visual_tracking_parking_enabled_) return;
 
     TargetEstimate estimate;
     if (estimateTarget(*msg, &estimate)) addEstimate(estimate);
   }
 
-  void addEstimate(const TargetEstimate& estimate) {
-    if (!estimates_.empty() && estimate.stamp <= estimates_.back().stamp) return;
+  bool addEstimate(const TargetEstimate& estimate) {
+    const maze_planner::Point2 point(estimate.x, estimate.y);
+    if (competition_mode_ &&
+        (false_targets_.blocks(point, estimate.contour_ratio, ros::Time::now()) ||
+         (target_locked_ && maze_planner::norm(point - lockedTargetPoint()) >
+                                maze_planner::FinishTargetVerification::kAssociationRadius)))
+      return false;
+    if (!estimates_.empty() && estimate.stamp <= estimates_.back().stamp) return false;
+    if (competition_mode_ && target_locked_) verification_.seen(estimate.stamp);
     target_pose_valid_ = true;
     latest_target_ = estimate;
     estimates_.push_back(estimate);
@@ -644,7 +678,7 @@ class BlueGoalNavigator {
     target.pose.position.y = estimate.y;
     target.pose.orientation.w = 1.0;
     target_pose_pub_.publish(target);
-
+    return true;
   }
 
   bool estimateTarget(const stm32_bridge::BlueTargetObservation& observation,
@@ -679,7 +713,7 @@ class BlueGoalNavigator {
     double tilt = fresh_gimbal ? tilt_angle_ : 0.0;
     if (competition_mode_) {
       pan = tilt = 0.0;
-      if (!gimbal_history_.angles(observation.header.stamp, &pan, &tilt) && require_gimbal_)
+      if (!gimbal_history_.angles(observation.header.stamp, &pan, &tilt, gimbal_max_skew_) && require_gimbal_)
         return false;
     } else if (require_gimbal_ && !fresh_gimbal) {
       return false;
@@ -692,6 +726,8 @@ class BlueGoalNavigator {
                                      observation.center_y, cx, cy, fx, fy, &bearing))
       return false;
     const double down_angle = tilt + pixel_down_angle;
+    if (competition_mode_ && !maze_planner::plausibleTargetHeight(
+            camera_z_, slant_range, down_angle, min_target_z_, max_target_z_)) return false;
     const double horizontal_range = slant_range * std::cos(down_angle);
     if (!std::isfinite(horizontal_range) || horizontal_range <= 0.0) return false;
 
@@ -705,13 +741,16 @@ class BlueGoalNavigator {
     estimate->x = robot_x + std::cos(robot_yaw) * local_x - std::sin(robot_yaw) * local_y;
     estimate->y = robot_y + std::sin(robot_yaw) * local_x + std::cos(robot_yaw) * local_y;
     estimate->range = horizontal_range;
+    estimate->contour_ratio = observation.contour_ratio;
     estimate->stamp = competition_mode_ ? observation.header.stamp : ros::Time::now();
     if (competition_mode_) {
+      if (!insideMapMargin(estimate->x, estimate->y)) return false;
       const auto camera = maze_planner::Point2(robot_x, robot_y) +
                           maze_planner::rotate({camera_x_, camera_y_}, robot_yaw);
       const double angle = robot_yaw + bearing;
       estimate->outward = {-std::cos(angle), -std::sin(angle)};
       localizeFinishWall(camera, angle, horizontal_range, estimate);
+      if (!insideMapMargin(estimate->x, estimate->y)) return false;
     }
     return true;
   }
@@ -731,12 +770,14 @@ class BlueGoalNavigator {
     double mean_x = 0.0;
     double mean_y = 0.0;
     double mean_range = 0.0;
+    double largest_contour = 0.0;
     maze_planner::Point2 normal;
     int wall_samples = 0;
     for (const TargetEstimate& value : estimates_) {
       mean_x += value.x;
       mean_y += value.y;
       mean_range += value.range;
+      largest_contour = std::max(largest_contour, value.contour_ratio);
       normal = normal + value.outward;
       wall_samples += value.wall_valid;
     }
@@ -755,6 +796,8 @@ class BlueGoalNavigator {
     result->x = mean_x;
     result->y = mean_y;
     result->range = mean_range;
+    if (competition_mode_ && false_targets_.blocks(
+            {mean_x, mean_y}, largest_contour, ros::Time::now())) return false;
     const double normal_length = maze_planner::norm(normal);
     if (competition_mode_ && normal_length < .75 * count) return false;
     result->wall_valid = wall_samples >= (target_sample_count_ + 1) / 2;
@@ -763,15 +806,29 @@ class BlueGoalNavigator {
     return true;
   }
 
-  bool worldToMap(double wx, double wy, int* mx, int* my) const {
+  maze_planner::Point2 mapLocal(double wx, double wy) const {
+    const auto& origin = map_.info.origin;
+    return maze_planner::rotate({wx - origin.position.x, wy - origin.position.y},
+                                -yawFromQuaternion(origin.orientation));
+  }
+
+  bool insideMapMargin(double wx, double wy) const {
+    int mx, my;
+    if (worldToMap(wx, wy, &mx, &my)) return true;
     if (!have_map_ || map_.info.resolution <= 0.0) return false;
-    const double origin_yaw = yawFromQuaternion(map_.info.origin.orientation);
-    const double dx = wx - map_.info.origin.position.x;
-    const double dy = wy - map_.info.origin.position.y;
-    const double local_x = std::cos(origin_yaw) * dx + std::sin(origin_yaw) * dy;
-    const double local_y = -std::sin(origin_yaw) * dx + std::cos(origin_yaw) * dy;
-    *mx = static_cast<int>(std::floor(local_x / map_.info.resolution));
-    *my = static_cast<int>(std::floor(local_y / map_.info.resolution));
+    const auto p = mapLocal(wx, wy);
+    const double width = map_.info.width * map_.info.resolution;
+    const double height = map_.info.height * map_.info.resolution;
+    return std::hypot(p.x - clampValue(p.x, 0.0, width),
+                      p.y - clampValue(p.y, 0.0, height)) <= .50;
+  }
+
+  bool worldToMap(double wx, double wy, int* mx, int* my) const {
+    if (!have_map_ || map_.info.resolution <= 0.0 ||
+        !std::isfinite(wx) || !std::isfinite(wy)) return false;
+    const auto p = mapLocal(wx, wy);
+    *mx = static_cast<int>(std::floor(p.x / map_.info.resolution));
+    *my = static_cast<int>(std::floor(p.y / map_.info.resolution));
     return *mx >= 0 && *my >= 0 && *mx < static_cast<int>(map_.info.width) &&
            *my < static_cast<int>(map_.info.height);
   }
@@ -1088,11 +1145,11 @@ class BlueGoalNavigator {
     if (terminal_active_ == msg->data) return;
     terminal_active_ = msg->data;
     if (terminal_active_ && goal_active_) move_base_.cancelGoal();
-    if (!terminal_active_ && enabled_ && state_ == State::APPROACH)
+    if (!terminal_active_ && enabled_ && target_locked_ && have_entrance_goal_)
       rejected_entrances_.emplace_back(current_approach_goal_.x, current_approach_goal_.y);
     goal_active_ = false;
     goal_kind_ = GoalKind::NONE;
-    arrival_time_ = ros::Time();
+    verification_.leaveEntrance();
     last_search_check_ = ros::Time();
   }
 
@@ -1116,22 +1173,38 @@ class BlueGoalNavigator {
     observe_cmd_pub_.publish(cmd);
   }
 
+  void plannerDiagnosticsCb(const std_msgs::String::ConstPtr& msg) {
+    if (!goal_active_ || goal_kind_ != GoalKind::SEARCH) return;
+    if (msg->data.find("\"valid\":false") == std::string::npos) {
+      plan_failure_since_ = ros::Time();
+      return;
+    }
+    const auto now = ros::Time::now();
+    if (plan_failure_since_.isZero() || (now - last_plan_failure_).toSec() > 1.5)
+      plan_failure_since_ = now;
+    last_plan_failure_ = now;
+  }
+
   bool nextFrontier(const maze_planner::CorridorGrid& grid, const maze_planner::Point2& robot,
                     const maze_planner::Point2* advance_past = nullptr) {
     maze_planner::Point2 point;
     double yaw = 0.0;
-    if (!explorer_.select(grid, robot, &point, &yaw, advance_past, &footprint_))
+    if (!explorer_.select(grid, robot, &point, &yaw, advance_past, &footprint_,
+                          planner_collision_padding_))
       return false;
     const double wall_yaw = maze_planner::detail::refineHeadingTowardWall(
         map_, maze_planner::detail::gridOriginYaw(map_), point.x, point.y, yaw, 1.2);
     const double correction = yawDifference(yaw, wall_yaw);
     yaw += clampValue(correction, -.35, .35);
-    if (!grid.footprintClear(point, yaw, footprint_)) {
+    if (!grid.footprintClear(point, yaw, footprint_, planner_collision_padding_)) {
       yaw -= clampValue(correction, -.35, .35);
-      if (!grid.footprintClear(point, yaw, footprint_)) return false;
+      if (!grid.footprintClear(point, yaw, footprint_, planner_collision_padding_)) return false;
     }
     if (state_ == State::OBSERVE) publishObservationTurn(0.0);
     frontier_ = point;
+    frontier_progress_pose_ = robot;
+    frontier_progress_time_ = ros::Time::now();
+    plan_failure_since_ = ros::Time();
     advance_checked_ = false;
     sendMoveBaseGoal(point.x, point.y, yaw, GoalKind::SEARCH);
     setState(State::SEARCH, "exploring reachable corridor");
@@ -1163,7 +1236,13 @@ class BlueGoalNavigator {
       const auto frame = pending_observation_;
       pending_observation_.reset();
       TargetEstimate estimate;
-      if (estimateTarget(*frame, &estimate)) addEstimate(estimate);
+      if (frame->detected && estimateTarget(*frame, &estimate) && addEstimate(estimate)) {
+        validated_observation_pub_.publish(frame);
+      } else {
+        auto rejected = *frame;
+        rejected.detected = false;
+        validated_observation_pub_.publish(rejected);
+      }
     }
     if (terminal_active_) return;
     explorer_.track(robot);
@@ -1171,16 +1250,22 @@ class BlueGoalNavigator {
     TargetEstimate stable;
     double spread = 0.0;
     if (now >= target_reacquire_after_ && stableTarget(&stable, &spread)) {
-      if (!target_locked_ || maze_planner::norm(
-          maze_planner::Point2(stable.x - locked_target_.x, stable.y - locked_target_.y)) > .55)
-        rejected_entrances_.clear();
-      if (!target_locked_ || stable.wall_valid || !locked_target_.wall_valid)
+      if (!target_locked_) {
+        target_locked_ = true;
         locked_target_ = stable;
-      target_locked_ = true;
+        verification_.reset();
+        verification_.seen(estimates_.back().stamp);
+      } else if (maze_planner::norm(
+                     maze_planner::Point2(stable.x, stable.y) - lockedTargetPoint()) <=
+                     maze_planner::FinishTargetVerification::kAssociationRadius &&
+                 (stable.wall_valid || !locked_target_.wall_valid)) {
+        locked_target_ = stable;
+      }
     }
 
     const bool scan_fresh = have_scan_ && (now - last_scan_time_).toSec() <= .5;
     if (!scan_fresh) {
+      verification_.leaveEntrance();
       if (goal_active_) move_base_.cancelGoal();
       goal_active_ = false;
       goal_kind_ = GoalKind::NONE;
@@ -1190,7 +1275,7 @@ class BlueGoalNavigator {
 
     if (target_locked_) {
       const auto grid = activeGrid(robot, yaw);
-      if (runEntrance(grid, now)) return;
+      if (runEntrance(grid, robot, yaw, now)) return;
     }
 
     if (!last_search_check_.isZero() && (now - last_search_check_).toSec() < .5) return;
@@ -1200,8 +1285,22 @@ class BlueGoalNavigator {
       const auto action = move_base_.getState();
       const bool reached = action == actionlib::SimpleClientGoalState::SUCCEEDED;
       const bool blocked = !grid.clear(frontier_, .30, 95);
+      if (maze_planner::norm(robot - frontier_progress_pose_) >= .08) {
+        frontier_progress_pose_ = robot;
+        frontier_progress_time_ = now;
+      }
+      const bool stalled = !plan_failure_since_.isZero() &&
+          (now - last_plan_failure_).toSec() <= 1.5 &&
+          (now - plan_failure_since_).toSec() >= 5.0 &&
+          (now - frontier_progress_time_).toSec() >= 6.0;
       const bool timeout = (now - goal_sent_time_).toSec() > search_goal_timeout_;
-      if (blocked || (action.isDone() && !reached) || timeout) {
+      if (blocked || (action.isDone() && !reached) || timeout || (stalled && !reached)) {
+        if (stalled && !reached)
+          ROS_WARN("Frontier (%.2f, %.2f) stalled with continuous invalid plans",
+                   frontier_.x, frontier_.y);
+        if (!action.isDone()) move_base_.cancelGoal();
+        goal_active_ = false;
+        goal_kind_ = GoalKind::NONE;
         if (!blocked) explorer_.visit(frontier_);
         if (nextFrontier(grid, robot)) return;
         beginObserve(yaw, now);
@@ -1234,44 +1333,92 @@ class BlueGoalNavigator {
     publishObservationTurn(clear ? turn : 0.0);
   }
 
-  bool runEntrance(const maze_planner::CorridorGrid& grid, const ros::Time& now) {
-    const maze_planner::WallObservation wall{
-        {locked_target_.x, locked_target_.y}, locked_target_.outward};
+  maze_planner::Point2 lockedTargetPoint() const {
+    return {locked_target_.x, locked_target_.y};
+  }
+
+  bool releaseEntrance(const ros::Time& now, const std::string& reason) {
+    if (goal_active_) move_base_.cancelGoal();
+    goal_active_ = false;
+    goal_kind_ = GoalKind::NONE;
+    target_locked_ = target_visible_ = target_pose_valid_ = false;
+    estimates_.clear();
+    pending_observation_.reset();
+    rejected_entrances_.clear();
+    have_entrance_goal_ = false;
+    verification_.reset();
+    entrance_unavailable_since_ = ros::Time();
+    target_reacquire_after_ = now + ros::Duration(2.0);
+    last_search_check_ = ros::Time();
+    setState(State::SEARCH, reason);
+    return false;
+  }
+
+  bool runEntrance(const maze_planner::CorridorGrid& grid, const maze_planner::Point2& robot,
+                   double robot_yaw, const ros::Time& now) {
+    const maze_planner::WallObservation wall{lockedTargetPoint(), locked_target_.outward};
     const maze_planner::Point2 current(current_approach_goal_.x, current_approach_goal_.y);
-    const bool active = goal_active_ && goal_kind_ == GoalKind::APPROACH;
-    const bool occupied = active && !grid.footprintClear(current, current_approach_yaw_, footprint_);
-    if (active && !occupied) {
+    bool refreshing_entrance = false;
+    const bool alternate_view = verification_.needsAlternateView();
+    if (goal_active_ && goal_kind_ == GoalKind::APPROACH) {
       const auto action = move_base_.getState();
-      if (action == actionlib::SimpleClientGoalState::SUCCEEDED) {
-        if (arrival_time_.isZero()) {
-          arrival_time_ = now;
+      const bool occupied = !grid.footprintClear(
+          current, current_approach_yaw_, footprint_, planner_collision_padding_);
+      if (!occupied && action == actionlib::SimpleClientGoalState::SUCCEEDED) {
+        if ((now - last_observation_time_).toSec() > 1.0 ||
+            (require_gimbal_ && (!gimbal_connected_ || !gimbal_ready_ ||
+                                (now - last_joint_time_).toSec() > 1.5)))
+          return releaseEntrance(now, "no fresh camera or gimbal feedback for entrance verification");
+        if (!verification_.arrived()) {
+          verification_.arrive(now);
           setState(State::APPROACH, "entrance reached; verifying terminal corridor");
         }
-        if ((now - arrival_time_).toSec() < 2.6) return true;
-        rejected_entrances_.push_back(current);
-        goal_active_ = false;
-      } else if (action.isDone() || (now - goal_sent_time_).toSec() > search_goal_timeout_) {
+        using Result = maze_planner::FinishTargetVerification::Result;
+        const auto result = verification_.result(now, waypoint_observation_time_);
+        if (result == Result::Waiting) return true;
+        if (result == Result::FalseTarget) {
+          false_targets_.add(lockedTargetPoint(), now);
+          explorer_.visit(current);
+          ROS_WARN("False blue target at (%.2f, %.2f): two entrance scans found no marker",
+                   locked_target_.x, locked_target_.y);
+          return releaseEntrance(now, "false blue target suppressed; exploring again");
+        }
+      } else if (!occupied && !action.isDone() &&
+                 (now - goal_sent_time_).toSec() <= (alternate_view ? 4.0 : search_goal_timeout_)) {
+        if (alternate_view || !verification_.seenAfter(goal_sent_time_) ||
+            (now - last_approach_update_).toSec() < goal_update_period_) return true;
+        refreshing_entrance = true;
+      } else if (alternate_view) {
+        return releaseEntrance(now, "alternate observation entrance unreachable; exploring again");
+      }
+      if (!refreshing_entrance) {
         if (!action.isDone()) move_base_.cancelGoal();
-        rejected_entrances_.push_back(current);
         goal_active_ = false;
+        goal_kind_ = GoalKind::NONE;
+        verification_.leaveEntrance();
+        rejected_entrances_.push_back(current);
       }
     }
 
-    maze_planner::Point2 entrance;
-    if (maze_planner::selectFinishEntrance(grid, wall, footprint_, rejected_entrances_, &entrance)) {
-      entrance_unavailable_since_ = ros::Time();
-      const double yaw = maze_planner::parkingYaw(wall);
-      if (active && goal_active_ && !occupied &&
-          ((now - last_approach_update_).toSec() < goal_update_period_ ||
-           (maze_planner::norm(entrance - current) < goal_update_distance_ &&
-            std::fabs(yawDifference(current_approach_yaw_, yaw)) < M_PI / 30)))
-        return true;
+    if (rejected_entrances_.size() >= 4) {
+      if (have_entrance_goal_) explorer_.visit(current);
+      return releaseEntrance(now, "four entrances failed; exploring from another view");
+    }
 
+    maze_planner::Point2 entrance;
+    const auto* reselect_from = have_entrance_goal_ ? &robot : nullptr;
+    const double yaw = maze_planner::parkingYaw(wall);
+    if (maze_planner::selectFinishEntrance(grid, wall, footprint_, rejected_entrances_, &entrance,
+          planner_collision_padding_, reselect_from, robot_yaw, verification_.needsAlternateView())) {
+      entrance_unavailable_since_ = ros::Time();
+      last_approach_update_ = now;
+      if (refreshing_entrance && maze_planner::norm(entrance - current) < goal_update_distance_ &&
+          std::fabs(yawDifference(current_approach_yaw_, yaw)) < M_PI / 30) return true;
       if (state_ == State::OBSERVE) publishObservationTurn(0.0);
-      arrival_time_ = ros::Time();
+      if (goal_active_) move_base_.cancelGoal();
+      have_entrance_goal_ = true;
       current_approach_goal_ = {entrance.x, entrance.y};
       current_approach_yaw_ = yaw;
-      last_approach_update_ = now;
       sendMoveBaseGoal(entrance.x, entrance.y, yaw, GoalKind::APPROACH);
       geometry_msgs::PoseStamped pose;
       pose.header.stamp = now;
@@ -1283,25 +1430,22 @@ class BlueGoalNavigator {
       setState(State::APPROACH, "navigating to blue-marker entrance");
       return true;
     }
-    if (active && goal_active_) {
-      if (!occupied) return true;
-      move_base_.cancelGoal();
-      goal_active_ = false;
-      goal_kind_ = GoalKind::NONE;
+
+    if (refreshing_entrance) {
+      last_approach_update_ = now;
+      return true;
     }
-    if (entrance_unavailable_since_.isZero()) entrance_unavailable_since_ = now;
-    // A blocked terminal can remain visible. Resume exploration once all
-    // entrance candidates have failed so the robot can view it from elsewhere.
-    if ((now - entrance_unavailable_since_).toSec() >= target_lost_timeout_) {
-      if (state_ == State::APPROACH) explorer_.visit(current);
-      target_locked_ = false;
-      entrance_unavailable_since_ = ros::Time();
-      target_reacquire_after_ = now + ros::Duration(2.0);
-      rejected_entrances_.clear();
-      estimates_.clear();
-      if (state_ == State::APPROACH) setState(State::SEARCH, "entrance unavailable; exploring again");
+    if (goal_active_) move_base_.cancelGoal();
+    goal_active_ = false;
+    goal_kind_ = GoalKind::NONE;
+    if (state_ == State::OBSERVE) publishObservationTurn(0.0);
+    if (entrance_unavailable_since_.isZero()) {
+      entrance_unavailable_since_ = now;
+      setState(State::APPROACH, "waiting for a clear blue-marker entrance");
     }
-    return false;
+    if ((now - entrance_unavailable_since_).toSec() < target_lost_timeout_) return true;
+    if (have_entrance_goal_) explorer_.visit(current);
+    return releaseEntrance(now, "entrance unavailable; exploring again");
   }
 
   void localizeFinishWall(const maze_planner::Point2& camera, double bearing,
@@ -1599,7 +1743,7 @@ class BlueGoalNavigator {
 
   ros::Subscriber observation_sub_;
   ros::Subscriber black_line_sub_;
-  ros::Subscriber scan_sub_;
+  ros::Subscriber scan_sub_, planner_diagnostics_sub_;
   ros::Subscriber camera_info_sub_;
   ros::Subscriber map_sub_;
   ros::Subscriber amcl_sub_;
@@ -1612,7 +1756,7 @@ class BlueGoalNavigator {
   ros::Subscriber costmap_sub_;
   ros::Publisher observe_cmd_pub_;
   ros::Publisher state_pub_;
-  ros::Publisher target_pose_pub_;
+  ros::Publisher target_pose_pub_, validated_observation_pub_;
   ros::Publisher approach_goal_pub_;
   ros::Publisher goal_reached_pub_;
   ros::ServiceClient tolerance_client_;
@@ -1621,14 +1765,18 @@ class BlueGoalNavigator {
   bool competition_mode_{false}, explorer_started_{false}, target_locked_{false};
   nav_msgs::OccupancyGrid::ConstPtr costmap_;
   ros::Time costmap_received_, last_search_check_, entrance_unavailable_since_;
-  ros::Time observe_since_, arrival_time_, target_reacquire_after_;
+  ros::Time observe_since_, target_reacquire_after_;
+  ros::Time plan_failure_since_, last_plan_failure_, frontier_progress_time_;
+  maze_planner::Point2 frontier_progress_pose_;
+  maze_planner::FinishTargetVerification verification_;
+  maze_planner::FalseFinishTargets false_targets_;
   maze_planner::CorridorExplorer explorer_;
   maze_planner::Point2 origin_start_, frontier_;
   std::vector<maze_planner::Point2> rejected_entrances_;
   maze_planner::GimbalHistory gimbal_history_;
   stm32_bridge::BlueTargetObservation::ConstPtr pending_observation_;
   TargetEstimate locked_target_;
-  bool terminal_active_{false}, advance_checked_{false};
+  bool terminal_active_{false}, advance_checked_{false}, have_entrance_goal_{false};
   double observe_heading_{0.0};
   int observe_direction_{1};
 
@@ -1642,6 +1790,8 @@ class BlueGoalNavigator {
   std::string base_frame_{"base_footprint"};
   double camera_x_{0.145};
   double camera_y_{0.0};
+  double camera_z_{0.42}, min_target_z_{0.02}, max_target_z_{0.72};
+  double gimbal_max_skew_{0.55}, planner_collision_padding_{0.025};
   double paper_height_{0.297};
   double fallback_hfov_deg_{70.0};
   double min_pixel_height_{18.0};

@@ -23,9 +23,9 @@
   <arg name="corner_clearance" default="true"/>
   <!-- Empty means reuse a reviewed sidecar/cache or generate a new mask. -->
   <arg name="corner_clearance_map" default=""/>
-  <arg name="corner_extra_clearance" default="0.05"/>
+  <arg name="corner_extra_clearance" default="0.025"/>
   <arg name="wall_endpoint_clearance" default="true"/>
-  <arg name="wall_endpoint_radius" default="0.05"/>
+  <arg name="wall_endpoint_radius" default="0.025"/>
   <arg name="corner_minimum_wall_length" default="0.25"/>
   <arg name="corner_minimum_turn_degrees" default="45"/>
   <arg name="corner_scope" default="main_walls"/>
@@ -78,6 +78,7 @@
   <arg name="gimbal_baud" default="115200"/>
   <arg name="gimbal_required" default="false"/>
   <arg name="gimbal_auto_enable" default="false"/>
+  <arg name="gimbal_require_status_checksum" default="false"/>
   <!-- 本车实测镜头向右时舵机报告正角度；ROS 右转角应为负。 -->
   <arg name="gimbal_pan_to_ros_sign" default="-1.0"/>
   <arg name="gimbal_invert_target_x" default="true"/>
@@ -108,6 +109,8 @@
   <arg name="blue_min_aspect" default="0.25"/>
   <arg name="blue_max_aspect" default="1.70"/>
   <arg name="blue_reject_vertical_stripes" default="false"/>
+  <arg name="blue_roi_top_ratio" default="0.0"/>
+  <arg name="blue_roi_bottom_ratio" default="1.0"/>
   <arg name="blue_confirm_frames" default="3"/>
   <arg name="blue_clear_frames" default="6"/>
   <arg name="blue_h_min" default="100"/>
@@ -230,6 +233,8 @@
     <param name="min_aspect" value="$(arg blue_min_aspect)"/>
     <param name="max_aspect" value="$(arg blue_max_aspect)"/>
     <param name="reject_vertical_stripes" value="$(arg blue_reject_vertical_stripes)"/>
+    <param name="roi_top_ratio" value="$(arg blue_roi_top_ratio)"/>
+    <param name="roi_bottom_ratio" value="$(arg blue_roi_bottom_ratio)"/>
     <param name="confirm_frames" value="$(arg blue_confirm_frames)"/>
     <param name="clear_frames" value="$(arg blue_clear_frames)"/>
     <param name="h_min" value="$(arg blue_h_min)"/>
@@ -265,6 +270,7 @@
     <param name="baud" value="$(arg gimbal_baud)"/>
     <param name="required" value="$(arg gimbal_required)"/>
     <param name="auto_enable" value="$(arg gimbal_auto_enable)"/>
+    <param name="require_status_checksum" value="$(arg gimbal_require_status_checksum)"/>
     <param name="center_on_connect" value="true"/>
     <param name="publish_camera_tf" value="true"/>
     <param name="base_frame" value="base_footprint"/>
@@ -370,10 +376,10 @@
       <param name="make_plan_add_unreachable_goal" value="false"/>
       <!-- 按5Hz请求重算全局参考；实际响应还受计算和调度耗时影响。 -->
       <param name="controller_frequency" value="12.0"/>
-      <param name="planner_frequency" value="5.0"/>
+      <param name="planner_frequency" value="2.0"/>
       <!-- 动态障碍和紧凑弯口允许短时等待/重优化，不再5秒就永久放弃目标。 -->
       <param name="controller_patience" value="15.0"/>
-      <param name="planner_patience" value="10.0"/>
+      <param name="planner_patience" value="4.0"/>
       <param name="oscillation_timeout" value="12.0"/>
       <param name="oscillation_distance" value="0.05"/>
       <param name="shutdown_costmaps" value="false"/>
@@ -387,7 +393,7 @@
       </rosparam>
       <!-- 保留车周围4m方形内的观测，覆盖完整局部窗口。盲区里的箱子不能
            因恢复动作被忘记；附近旧观测仅由真实清障射线释放。 -->
-      <param name="clear_dynamic_obstacles/reset_distance" value="4.0"/>
+      <param name="clear_dynamic_obstacles/reset_distance" value="1.5"/>
       <param name="clear_dynamic_obstacles/invert_area_to_clear" value="false"/>
       <param name="clear_dynamic_obstacles/affected_maps" value="both"/>
       <rosparam param="clear_dynamic_obstacles/layer_names">[obstacle_layer]</rosparam>

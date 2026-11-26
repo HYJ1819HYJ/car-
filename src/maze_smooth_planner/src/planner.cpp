@@ -43,7 +43,12 @@ class SmoothGlobalPlanner : public nav_core::BaseGlobalPlanner {
                 std::vector<geometry_msgs::PoseStamped>& plan) override {
     std::lock_guard<std::mutex> lock(mutex_);plan.clear();if(!map_)return false;
     std::vector<geometry_msgs::PoseStamped> raw;
-    if(!raw_.makePlan(start,goal,raw) || raw.size()<2)return false;
+    if(!raw_.makePlan(start,goal,raw) || raw.size()<2) {
+      std_msgs::String diagnostic;
+      diagnostic.data = R"({"valid":false,"reason":"raw_plan_unavailable"})";
+      diag_pub_.publish(diagnostic);
+      return false;
+    }
     nav_msgs::Path message;message.header=raw.front().header;message.header.stamp=ros::Time::now();
     message.poses=raw;raw_pub_.publish(message);
     // Actual robot pose anchors the output; grid quantization must not move it.

@@ -1,4 +1,5 @@
 #include <maze_smooth_planner/smoother.h>
+#include <costmap_2d/cost_values.h>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -39,7 +40,9 @@ bool footprintReplan(const Pose& start, const Pose& goal,
       int id=y*mw+x;clearance[id]=0;wave.push(id);
     }
   }
+  std::size_t wave_steps = 0;
   while(!wave.empty()){
+    if ((wave_steps++ & 255) == 0 && elapsed() >= cfg.replan_compute_ms) return false;
     int id=wave.front();wave.pop();int x=id%mw,y=id/mw;
     for(int h=0;h<8;++h){int xx=x+dx[h],yy=y+dy[h];
       if(xx<0 || yy<0 || xx>=mw || yy>=mh)continue;
@@ -60,7 +63,60 @@ bool footprintReplan(const Pose& start, const Pose& goal,
   };
   using Item=std::pair<double,int>;
   std::priority_queue<Item,std::vector<Item>,std::greater<Item>> open;
-  auto heuristic=[&](int id){auto p=pose(id);return std::hypot(p.x-goal.x,p.y-goal.y);};
+  // A bounded reverse Dijkstra supplies a wall-aware guide to the heading
+  // search. The guide knows only the center cell; every accepted path still
+  // needs the original footprint checks.
+  const int unreachable = std::numeric_limits<int>::max();
+  std::vector<int> reverse_distance(count / 8, unreachable);
+  using GridItem = std::pair<int, int>;
+  std::priority_queue<GridItem, std::vector<GridItem>, std::greater<GridItem>> reverse_open;
+  const int gx = std::lround((goal.x - ox) / step);
+  const int gy = std::lround((goal.y - oy) / step);
+  const auto open_cell = [&](int x, int y) {
+    return inside(x, y) && map.getCost(2 * x, 2 * y) < costmap_2d::LETHAL_OBSTACLE;
+  };
+  for (int y = gy - 1; y <= gy + 1; ++y) {
+    for (int x = gx - 1; x <= gx + 1; ++x) {
+      if (!open_cell(x, y)) continue;
+      const int cell = y * nx + x;
+      const auto p = pose(cell * 8);
+      const double proximity = std::hypot(p.x - goal.x, p.y - goal.y);
+      if (proximity > 1.5 * step) continue;
+      reverse_distance[cell] = std::lround(proximity * 10 / step);
+      reverse_open.emplace(reverse_distance[cell], cell);
+    }
+  }
+  const double guide_deadline = elapsed() + std::min(8.0, .12 * cfg.replan_compute_ms);
+  std::size_t guide_steps = 0;
+  while (!reverse_open.empty()) {
+    if ((guide_steps++ & 127) == 0 &&
+        elapsed() >= std::min(guide_deadline, cfg.replan_compute_ms)) break;
+    const auto item = reverse_open.top();
+    reverse_open.pop();
+    const int cost = item.first, cell = item.second;
+    if (cost != reverse_distance[cell]) continue;
+    const int x = cell % nx, y = cell / nx;
+    for (int h = 0; h < 8; ++h) {
+      const int xx = x + dx[h], yy = y + dy[h];
+      if (!open_cell(xx, yy)) continue;
+      const bool diagonal = dx[h] && dy[h];
+      if (diagonal && (!open_cell(xx, y) || !open_cell(x, yy))) continue;
+      const int next = yy * nx + xx;
+      const int candidate = cost + (diagonal ? 14 : 10);
+      if (candidate >= reverse_distance[next]) continue;
+      reverse_distance[next] = candidate;
+      reverse_open.emplace(candidate, next);
+    }
+  }
+  const auto distance_to_goal = [&](int id) {
+    const auto p = pose(id);
+    return std::hypot(p.x - goal.x, p.y - goal.y);
+  };
+  const auto heuristic = [&](int id) {
+    const int guide = reverse_distance[id / 8];
+    const double direct = distance_to_goal(id);
+    return 1.25 * (guide == unreachable ? direct : std::max(direct, .1 * step * guide));
+  };
   int sx=std::lround((start.x-ox)/step),sy=std::lround((start.y-oy)/step);
   int sh=(static_cast<int>(std::lround(start.yaw/(M_PI/4)))%8+8)%8;
   // Connect the exact robot pose; never quantize its published start away.
@@ -77,7 +133,7 @@ bool footprintReplan(const Pose& start, const Pose& goal,
     auto item=open.top();open.pop();int id=item.second;
     if(item.first>distance[id]+heuristic(id)+1e-8)continue;
     auto a=pose(id);int h=id%8,cell=id/8,x=cell%nx,y=cell/nx;
-    if(heuristic(id)<=1.5*step && pathFree({a,goal},map,body,cfg.collision_padding)){
+    if(distance_to_goal(id)<=1.5*step && pathFree({a,goal},map,body,cfg.collision_padding)){
       finish=id;break;
     }
     // Differential-drive primitives: forward in the current heading, or

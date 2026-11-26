@@ -15,5 +15,6 @@
   <depend>nav_msgs</depend>
   <depend>std_msgs</depend>
   <depend>teb_local_planner</depend>
+  <test_depend>maze_planner</test_depend>
   <export><nav_core plugin="${prefix}/planner_plugin.xml"/></export>
 </package>

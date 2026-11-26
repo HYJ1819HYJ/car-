@@ -34,6 +34,8 @@ public:
     nh_.param<double>("min_aspect", min_aspect_, 0.25);
     nh_.param<double>("max_aspect", max_aspect_, 1.70);
     nh_.param<bool>("reject_vertical_stripes", reject_vertical_stripes_, false);
+    nh_.param<double>("roi_top_ratio", roi_top_ratio_, 0.0);
+    nh_.param<double>("roi_bottom_ratio", roi_bottom_ratio_, 1.0);
     nh_.param<int>("confirm_frames", confirm_frames_, 3);
     nh_.param<int>("clear_frames", clear_frames_, 6);
     nh_.param<int>("h_min", h_min_, 100);
@@ -51,6 +53,8 @@ public:
     nh_.param<int>("black_clear_frames", black_clear_frames_, 6);
 
     confirm_frames_ = std::max(1, confirm_frames_);
+    roi_top_ratio_ = std::max(0.0, std::min(1.0, roi_top_ratio_));
+    roi_bottom_ratio_ = std::max(roi_top_ratio_, std::min(1.0, roi_bottom_ratio_));
     clear_frames_ = std::max(1, clear_frames_);
     min_pixel_width_ = std::max(2, min_pixel_width_);
     min_pixel_height_ = std::max(2, min_pixel_height_);
@@ -137,6 +141,11 @@ private:
       for (const auto& contour : contours) {
         const double area = cv::contourArea(contour);
         const cv::Rect rect = cv::boundingRect(contour);
+        const double center_y = rect.y + .5 * rect.height;
+        const bool bottom_fragment = roi_bottom_ratio_ < 1.0 &&
+            rect.height < .15 * mask.rows &&
+            (center_y > roi_bottom_ratio_ * mask.rows || rect.br().y >= mask.rows - 2);
+        if (center_y < roi_top_ratio_ * mask.rows || bottom_fragment) continue;
         const double rect_area = static_cast<double>(rect.area());
         const double fill = rect_area > 0.0 ? area / rect_area : 0.0;
         const double aspect = rect.height > 0
@@ -329,6 +338,8 @@ private:
   double min_aspect_{0.25};
   double max_aspect_{1.70};
   bool reject_vertical_stripes_{false};
+  double roi_top_ratio_{0.0};
+  double roi_bottom_ratio_{1.0};
   int confirm_frames_{3};
   int clear_frames_{6};
   int h_min_{100};

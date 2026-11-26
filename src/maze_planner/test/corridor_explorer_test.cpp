@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <maze_planner/corridor_explorer.h>
+#include <maze_planner/finish_target_verification.h>
 
 namespace {
 
@@ -87,6 +88,52 @@ TEST(FinishEntrance, AllowsCornerWithSoftInflationAndRejectsLethalFootprintCells
   EXPECT_FALSE(grid.footprintClear(goal, 0.0, rectangle));
   ASSERT_TRUE(maze_planner::selectFinishEntrance(grid, wall, rectangle, {}, &goal));
   EXPECT_GT(maze_planner::norm(goal - maze_planner::Point2(6.30, 2.25)), .1);
+}
+
+TEST(FinishEntrance, AvoidsGoalsCloseBehindTheRobotDuringReselection) {
+  const maze_planner::CorridorGrid grid(room());
+  const maze_planner::WallObservation wall{{7.15, 2.50}, {-1, 0}};
+  const maze_planner::Point2 robot(6.60, 2.50);
+  maze_planner::Point2 goal;
+  ASSERT_TRUE(maze_planner::selectFinishEntrance(grid, wall, rectangle, {}, &goal,
+                                                .025, &robot, 0));
+  const auto offset = goal - robot;
+  const double distance = maze_planner::norm(offset);
+  EXPECT_FALSE(distance < .55 && offset.x < -.5 * distance);
+}
+
+TEST(FinishVerification, SuppressesOnlyAfterTwoBlindEntranceScans) {
+  using namespace maze_planner;
+  using Result = FinishTargetVerification::Result;
+  FinishTargetVerification verify;
+  const Point2 target(2.87, .05);
+  FalseFinishTargets blacklist;
+  verify.seen(ros::Time(10.0));
+  verify.arrive(ros::Time(10.5));
+  EXPECT_EQ(Result::Waiting, verify.result(ros::Time(13.5), 2.6));
+  EXPECT_EQ(Result::Missing, verify.result(ros::Time(14.0), 2.6));
+  ASSERT_TRUE(verify.needsAlternateView());
+  verify.arrive(ros::Time(15.0));
+  EXPECT_EQ(Result::Waiting, verify.result(ros::Time(17.5), 2.6));
+  const ros::Time rejected_at(17.7);
+  ASSERT_EQ(Result::FalseTarget, verify.result(rejected_at, 2.6));
+  blacklist.add(target, rejected_at);
+  EXPECT_TRUE(blacklist.blocks({target.x + .8, target.y}, .002, rejected_at));
+  EXPECT_FALSE(blacklist.blocks({target.x + .91, target.y}, .002, rejected_at));
+  EXPECT_FALSE(blacklist.blocks(target, static_cast<float>(.03), rejected_at));
+  EXPECT_FALSE(blacklist.blocks(target, .002, ros::Time(62.7)));
+}
+
+TEST(FinishVerification, ValidSeenTargetDoesNotCountAsAFalseMarker) {
+  using namespace maze_planner;
+  using Result = FinishTargetVerification::Result;
+  FinishTargetVerification verify;
+  verify.arrive(ros::Time(10.0));
+  ASSERT_EQ(Result::Missing, verify.result(ros::Time(12.7), 2.6));
+  verify.arrive(ros::Time(14.0));
+  verify.seen(ros::Time(14.2));
+  EXPECT_EQ(Result::Seen, verify.result(ros::Time(16.7), 2.6));
+  EXPECT_FALSE(verify.needsAlternateView());
 }
 
 int main(int argc, char** argv) {

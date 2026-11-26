@@ -16,22 +16,25 @@ class GimbalHistory {
     Sample sample{joint.header.stamp, 0.0, 0.0};
     if (sample.time.isZero() || (!samples_.empty() && sample.time <= samples_.back().time))
       return;
-    bool pan = false;
+    bool pan = false, tilt = false;
     for (std::size_t i = 0; i < joint.name.size() && i < joint.position.size(); ++i) {
       if (joint.name[i] == "camera_pan_joint") {
         sample.pan = joint.position[i];
         pan = true;
       }
-      if (joint.name[i] == "camera_tilt_joint") sample.tilt = joint.position[i];
+      if (joint.name[i] == "camera_tilt_joint") {
+        sample.tilt = joint.position[i];
+        tilt = true;
+      }
     }
-    if (!pan || !std::isfinite(sample.pan) || !std::isfinite(sample.tilt)) return;
+    if (!pan || !tilt || !std::isfinite(sample.pan) || !std::isfinite(sample.tilt)) return;
     samples_.push_back(sample);
     while (samples_.size() > 1 && (sample.time - samples_.front().time).toSec() > 2.0)
       samples_.pop_front();
   }
 
   bool angles(const ros::Time& stamp, double* pan, double* tilt,
-              double max_skew = .15) const {
+              double max_skew = .55) const {
     if (stamp.isZero() || samples_.empty()) return false;
     const auto upper = std::lower_bound(samples_.begin(), samples_.end(), stamp,
         [](const Sample& sample, const ros::Time& time) { return sample.time < time; });

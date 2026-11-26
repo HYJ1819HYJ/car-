@@ -26,6 +26,8 @@
   <arg name="range_absolute_tolerance" default="0.25"/>
   <arg name="range_relative_tolerance" default="0.30"/>
   <arg name="corridor_check_standoff" default="0.48"/>
+  <arg name="gimbal_max_skew" default="0.55"/>
+  <arg name="gimbal_require_status_checksum" default="false"/>
   <arg name="max_sensor_skew" default="0.5"/>
 
   <!-- Hardware and navigation are started once. The two motion controllers
@@ -52,6 +54,7 @@
     <arg name="gimbal_port" value="$(arg gimbal_port)"/>
     <arg name="gimbal_required" value="true"/>
     <arg name="gimbal_auto_enable" value="true"/>
+    <arg name="gimbal_require_status_checksum" value="$(arg gimbal_require_status_checksum)"/>
     <arg name="gimbal_pan_to_ros_sign" value="-1.0"/>
     <arg name="enable_blue_autonomy" value="false"/>
     <arg name="blue_h_min" value="95"/>
@@ -61,6 +64,9 @@
     <arg name="blue_reject_vertical_stripes" value="true"/>
     <arg name="blue_v_min" value="55"/>
     <arg name="blue_fill_ratio" value="0.38"/>
+    <arg name="blue_confirm_frames" value="4"/>
+    <arg name="blue_roi_top_ratio" value="0.20"/>
+    <arg name="blue_roi_bottom_ratio" value="0.95"/>
     <arg name="blue_min_pixel_width" value="7"/>
     <arg name="blue_min_pixel_height" value="11"/>
     <arg name="fallback_hfov_deg" value="88.0"/>
@@ -79,6 +85,10 @@
     <param name="origin_start_y" value="$(arg initial_pose_y)"/>
     <param name="fallback_hfov_deg" value="88.0"/>
     <param name="min_pixel_height" value="11"/>
+    <param name="camera_z" value="0.42"/>
+    <param name="min_target_z" value="0.02"/>
+    <param name="max_target_z" value="0.72"/>
+    <param name="planner_collision_padding" value="0.025"/>
     <param name="target_sample_count" value="4"/>
     <param name="target_sample_max_age" value="0.8"/>
     <param name="target_max_stddev" value="0.25"/>
@@ -90,6 +100,7 @@
     <param name="line_guidance_enabled" value="false"/>
     <param name="require_localization" value="true"/>
     <param name="require_gimbal" value="true"/>
+    <param name="gimbal_max_skew" value="$(arg gimbal_max_skew)"/>
     <param name="require_camera_info" value="false"/>
     <param name="search_goal_timeout" value="30.0"/>
     <param name="visual_tracking_parking_enabled" value="false"/>
@@ -103,6 +114,7 @@
     <remap from="/cmd_vel" to="/handoff/cmd_vel_visual"/>
     <param name="auto_start" value="false"/>
     <param name="require_gimbal" value="true"/>
+    <param name="gimbal_max_skew" value="$(arg gimbal_max_skew)"/>
     <param name="max_speed" value="$(eval min(float(arg('visual_max_speed')), float(arg('max_speed'))))"/>
     <param name="max_turn" value="$(eval min(float(arg('visual_max_turn')), float(arg('max_turn'))))"/>
     <param name="stop_ratio" value="$(arg stop_ratio)"/>
@@ -115,6 +127,7 @@
   </node>
 
   <node pkg="maze_planner" type="visual_handoff_manager" name="visual_handoff_manager" output="screen">
+    <remap from="/blue_target/observation" to="/blue_target/validated_observation"/>
     <param name="auto_start" value="$(arg auto_start)"/>
     <param name="competition_mode" value="true"/>
     <param name="max_handoff_distance" value="$(arg max_handoff_distance)"/>

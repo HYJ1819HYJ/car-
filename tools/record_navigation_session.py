@@ -56,7 +56,7 @@ topics.extend([
     '/handoff/cmd_vel_nav', '/handoff/cmd_vel_visual',
     '/handoff/nav_enable', '/handoff/visual_enable',
     '/blue_target/map_pose', '/blue_target/approach_goal',
-    '/gimbal/connected', '/gimbal/servo_ready', '/gimbal/searching',
+    '/gimbal/connected', '/gimbal/servo_ready', '/gimbal/enabled', '/gimbal/searching',
     '/gimbal/target_locked', '/gimbal/status_text', '/gimbal/joint_states',
 ])
 metadata['recorded_topics']=topics

@@ -56,18 +56,22 @@ class CorridorGrid {
   }
 
   bool footprintClear(const Point2& pose, double heading,
-                      const std::vector<Point2>& footprint) const {
+                      const std::vector<Point2>& footprint, double padding = 0.0) const {
     if (!valid() || footprint.size() < 3) return false;
     const int i = cell(pose);
     if (lethal(i) || cost[i] >= 99) return false;
     std::vector<Point2> polygon;
     double x_min = width, y_min = height, x_max = 0, y_max = 0;
     for (const auto& p : footprint) {
-      const auto v = local(pose + rotate(p, heading));
+      // costmap_2d::padFootprint adds sign0(coordinate) * padding per axis.
+      const Point2 padded(p.x + (p.x < 0.0 ? -padding : padding),
+                          p.y + (p.y < 0.0 ? -padding : padding));
+      const auto v = local(pose + rotate(padded, heading));
       polygon.push_back(v);
       x_min = std::min(x_min, v.x); y_min = std::min(y_min, v.y);
       x_max = std::max(x_max, v.x); y_max = std::max(y_max, v.y);
     }
+    if (x_min < 0 || y_min < 0 || x_max >= width || y_max >= height) return false;
     // The STL footprint is a convex hull. Test overlap with the whole cell
     // using separating axes from the polygon and from the cell.
     for (int y = std::floor(y_min); y <= std::floor(y_max); ++y) {
@@ -118,7 +122,8 @@ class CorridorExplorer {
 
   bool select(const CorridorGrid& grid, const Point2& robot, Point2* target,
               double* yaw, const Point2* advance_past = nullptr,
-              const std::vector<Point2>* footprint = nullptr) const {
+              const std::vector<Point2>* footprint = nullptr,
+              double padding = 0.0) const {
     if (!grid.valid()) return false;
     std::vector<int> obstacles;
     for (int i = 0; i < grid.width * grid.height; ++i)
@@ -150,7 +155,7 @@ class CorridorExplorer {
                                .15 * from_robot[i] - (tracked ? .20 : 0.0);
       if (candidate <= score || !grid.clear(p, .38, 95)) continue;
       const double heading = arrivalHeading(grid, from_robot, i);
-      if (footprint && !grid.footprintClear(p, heading, *footprint)) continue;
+      if (footprint && !grid.footprintClear(p, heading, *footprint, padding)) continue;
       best = i;
       score = candidate;
       best_heading = heading;
@@ -226,16 +231,27 @@ class CorridorExplorer {
 
 inline bool selectFinishEntrance(const CorridorGrid& grid, const WallObservation& wall,
                                  const std::vector<Point2>& footprint,
-                                 const std::vector<Point2>& failed, Point2* goal) {
+                                 const std::vector<Point2>& failed, Point2* goal,
+                                 double padding = 0.0, const Point2* robot = nullptr,
+                                 double robot_yaw = 0.0, bool alternate_view = false) {
   const Point2 tangent(-wall.outward.y, wall.outward.x);
   const double yaw = parkingYaw(wall);
-  for (double depth : {.80, .95, .68, 1.15, 1.35}) {
+  const std::array<double, 5> depths = alternate_view
+      ? std::array<double, 5>{1.15, .68, .80, .95, 1.35}
+      : std::array<double, 5>{.80, .95, 1.15, .68, 1.35};
+  for (double depth : depths) {
     for (double side : {0.0, -.12, .12, -.25, .25}) {
       const auto p = parkingPosition(wall, depth) + side * tangent;
       if (std::any_of(failed.begin(), failed.end(),
                       [&](const Point2& other) { return norm(p - other) < .09; }))
         continue;
-      if (grid.footprintClear(p, yaw, footprint)) {
+      if (robot) {
+        const auto offset = p - *robot;
+        const double distance = norm(offset);
+        if (distance < .55 && dot(offset, {std::cos(robot_yaw), std::sin(robot_yaw)}) <
+                                  -.5 * distance) continue;
+      }
+      if (grid.footprintClear(p, yaw, footprint, padding)) {
         *goal = p;
         return true;
       }

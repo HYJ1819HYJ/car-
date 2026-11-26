@@ -7,9 +7,9 @@ SmoothGlobalPlanner:
   smoothing_clearance: 0.05
   collision_padding: 0.02
   # Limits search/rounding work; mandatory final sweep checking still runs.
-  max_compute_ms: 80.0
-  max_lateral_adjustment: 0.15
+  max_compute_ms: 50.0
+  max_lateral_adjustment: 0.22
   goal_tangent_length: 0.30
   # If local curve repair fails, search a different whole-footprint route.
   # Every forward/rotation edge and the complete result remain collision checked.
-  replan_compute_ms: 250.0
+  replan_compute_ms: 120.0

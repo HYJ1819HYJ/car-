@@ -15,6 +15,7 @@ find_package(catkin REQUIRED COMPONENTS
   sensor_msgs
   serial
   std_msgs
+  std_srvs
   cv_bridge
   image_transport
   tf
@@ -115,7 +116,7 @@ generate_messages(
 ## DEPENDS: system dependencies of this project that dependent projects also need
 catkin_package(
   INCLUDE_DIRS include
-  CATKIN_DEPENDS geometry_msgs message_runtime nav_msgs roscpp sensor_msgs serial std_msgs tf tf2 tf2_ros
+  CATKIN_DEPENDS geometry_msgs message_runtime nav_msgs roscpp sensor_msgs serial std_msgs std_srvs tf tf2 tf2_ros
 )
 
 ###########
@@ -219,6 +220,7 @@ target_link_libraries(scan_self_filter_node ${catkin_LIBRARIES})
 if(CATKIN_ENABLE_TESTING)
   find_package(rostest REQUIRED)
   add_rostest(test/scan_self_filter.test DEPENDENCIES scan_self_filter_node)
+  catkin_add_gtest(gimbal_bridge_parser_test test/gimbal_bridge_parser_test.cpp)
   catkin_add_gtest(protocol_test test/protocol_test.cpp)
   if(TARGET protocol_test)
     target_link_libraries(protocol_test stm32_bridge_protocol ${catkin_LIBRARIES})

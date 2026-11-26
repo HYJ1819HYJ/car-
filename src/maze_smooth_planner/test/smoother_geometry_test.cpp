@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 #include <maze_smooth_planner/smoother.h>
+#include <maze_planner/corridor_explorer.h>
+#include <chrono>
 #include <costmap_2d/cost_values.h>
 #include <cmath>
 #include <fstream>
@@ -132,4 +134,104 @@ TEST(FootprintSearch,BlockedStartAndInvalidBudgetAreRejected) {
   cfg.replan_compute_ms=0;
   EXPECT_FALSE(footprintReplan({-1,0,0},{1,0,0},map,body(),cfg,out));
   EXPECT_TRUE(out.empty());
+}
+
+namespace {
+
+// attempt-02/navigation_0.bag. Each fixture stores the latest preceding
+// published costmap, the raw path and the nearest AMCL pose to anchor its start.
+// For t100 the preceding full costmap publication was at t=92.73 s.
+bool loadMockSnapshot(const std::string& name, nav_msgs::OccupancyGrid* grid,
+                      costmap_2d::Costmap2D* map, std::vector<geometry_msgs::Point>* footprint,
+                      std::vector<Pose>* raw) {
+  std::ifstream f(std::string(MAZE_PLANNER_TEST_DATA) + "/" + name + ".txt");
+  auto& info = grid->info;
+  auto& origin = info.origin;
+  std::size_t runs;
+  f >> info.width >> info.height >> info.resolution >> origin.position.x >> origin.position.y >> runs;
+  if (!f) return false;
+  origin.orientation.w = 1.0;
+  map->resizeMap(info.width, info.height, info.resolution, origin.position.x, origin.position.y);
+  grid->data.reserve(info.width * info.height);
+  for (std::size_t i = 0; i < runs; ++i) {
+    int occupancy;
+    unsigned int count;
+    if (!(f >> occupancy >> count) || grid->data.size() + count > info.width * info.height)
+      return false;
+    // Invert the published costmap_2d translation table.
+    const int cost = occupancy < 0 ? 255 : occupancy == 100 ? 254 :
+        occupancy == 99 ? 253 : occupancy == 0 ? 0 :
+        1 + static_cast<int>(std::lround((occupancy - 1) * 251.0 / 97));
+    std::fill_n(map->getCharMap() + grid->data.size(), count, cost);
+    grid->data.insert(grid->data.end(), count, occupancy);
+  }
+  if (grid->data.size() != info.width * info.height) return false;
+  std::size_t count;
+  if (!(f >> count)) return false;
+  footprint->resize(count);
+  for (auto& p : *footprint) f >> p.x >> p.y;
+  if (!(f >> count)) return false;
+  raw->resize(count);
+  for (auto& p : *raw) f >> p.x >> p.y >> p.yaw;
+  return f.good() && !raw->empty() && footprint->size() >= 3;
+}
+
+}  // namespace
+
+TEST(Collision, CorridorEntranceAgreesWithPlannerOnRecordedGoal9) {
+  nav_msgs::OccupancyGrid occupancy;
+  costmap_2d::Costmap2D map;
+  std::vector<geometry_msgs::Point> footprint;
+  std::vector<Pose> raw;
+  ASSERT_TRUE(loadMockSnapshot("mock1126_goal9", &occupancy, &map, &footprint, &raw));
+  const maze_planner::CorridorGrid grid(occupancy);
+  std::vector<maze_planner::Point2> outline;
+  for (const auto& p : footprint) outline.emplace_back(p.x, p.y);
+  const auto& goal = raw.back();
+  EXPECT_NEAR(goal.x, 2.869, .001);
+  EXPECT_NEAR(goal.y, .054, .001);
+  EXPECT_TRUE(grid.footprintClear({goal.x, goal.y}, goal.yaw, outline));
+  EXPECT_FALSE(grid.footprintClear({goal.x, goal.y}, goal.yaw, outline, .025));
+  EXPECT_FALSE(poseFree(goal, map, footprint, .02));
+  int checked_clear = 0;
+  for (int x = -10; x <= 10; ++x) {
+    for (int y = -10; y <= 10; ++y) {
+      for (double yaw : {goal.yaw - .20, goal.yaw, goal.yaw + .20}) {
+        const Pose sample{goal.x + .02 * x, goal.y + .02 * y, yaw};
+        if (!grid.footprintClear({sample.x, sample.y}, yaw, outline, .025)) continue;
+        ++checked_clear;
+        EXPECT_TRUE(poseFree(sample, map, footprint, .02));
+      }
+    }
+  }
+  EXPECT_GT(checked_clear, 0);
+}
+
+TEST(FootprintSearch, MockRaceNarrowPassageSnapshotsRespectPlanningBudget) {
+  for (const auto* name : {"mock1126_t100", "mock1126_t110"}) {
+    SCOPED_TRACE(name);
+    nav_msgs::OccupancyGrid occupancy;
+    costmap_2d::Costmap2D map;
+    std::vector<geometry_msgs::Point> footprint;
+    std::vector<Pose> raw, out;
+    ASSERT_TRUE(loadMockSnapshot(name, &occupancy, &map, &footprint, &raw));
+    Config config;
+    config.max_compute_ms = 50.0;
+    config.replan_compute_ms = 120.0;
+    config.max_lateral_adjustment = .22;
+    Statistics stats;
+    const auto start = std::chrono::steady_clock::now();
+    const bool found = smooth(raw, map, footprint, config, out, stats) ||
+        footprintReplan(raw.front(), raw.back(), map, footprint, config, out);
+    const double ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - start).count();
+    std::cout << name << ": " << ms << " ms, path_found=" << found << '\n';
+    if (found) {
+      EXPECT_LT(ms, 150.0);
+      EXPECT_TRUE(pathFree(out, map, footprint, config.collision_padding));
+    } else {
+      EXPECT_LT(ms, 170.0);
+      EXPECT_TRUE(out.empty());
+    }
+  }
 }

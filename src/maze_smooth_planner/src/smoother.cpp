@@ -13,22 +13,40 @@ double wrap(double a) { return std::atan2(std::sin(a),std::cos(a)); }
 Pose blend(const Pose& a,const Pose& b,double t) {
   return {a.x+t*(b.x-a.x),a.y+t*(b.y-a.y),a.yaw+t*wrap(b.yaw-a.yaw)};
 }
-bool intersects(const std::vector<geometry_msgs::Point>& polygon,double cx,double cy,double h) {
-  // Separating-axis test for the convex chassis polygon and a whole cell.
-  for (size_t i=0;i<polygon.size()+2;++i) {
-    double ax=1,ay=0;
-    if (i==polygon.size()+1) {ax=0;ay=1;}
-    else if(i<polygon.size()) {
-      const auto& a=polygon[i]; const auto& b=polygon[(i+1)%polygon.size()];
-      ax=-(b.y-a.y);ay=b.x-a.x;
+struct CollisionAxis {
+  double x, y, low, high, radius;
+};
+
+std::vector<CollisionAxis> collisionAxes(const std::vector<geometry_msgs::Point>& polygon,
+                                        double cell_half_size) {
+  std::vector<CollisionAxis> axes;
+  axes.reserve(polygon.size() + 2);
+  const auto add = [&](double x, double y) {
+    double low = std::numeric_limits<double>::infinity(), high = -low;
+    for (const auto& p : polygon) {
+      const double projection = x * p.x + y * p.y;
+      low = std::min(low, projection);
+      high = std::max(high, projection);
     }
-    double lo=std::numeric_limits<double>::infinity(),hi=-lo;
-    for(const auto& p:polygon) {double z=ax*p.x+ay*p.y;lo=std::min(lo,z);hi=std::max(hi,z);}
-    double mid=ax*cx+ay*cy,r=h*(std::abs(ax)+std::abs(ay));
-    if(hi<mid-r-1e-10 || lo>mid+r+1e-10) return false;
+    axes.push_back({x, y, low, high, cell_half_size * (std::abs(x) + std::abs(y))});
+  };
+  add(1.0, 0.0);
+  add(0.0, 1.0);
+  for (std::size_t i = 0; i < polygon.size(); ++i) {
+    const auto& a = polygon[i];
+    const auto& b = polygon[(i + 1) % polygon.size()];
+    add(a.y - b.y, b.x - a.x);
   }
-  return true;
+  return axes;
 }
+
+bool intersects(const std::vector<CollisionAxis>& axes, double cx, double cy) {
+  return std::none_of(axes.begin(), axes.end(), [&](const CollisionAxis& axis) {
+    const double mid = axis.x * cx + axis.y * cy;
+    return axis.high < mid - axis.radius - 1e-10 || axis.low > mid + axis.radius + 1e-10;
+  });
+}
+
 void sampleLine(Pose a,Pose b,double step,std::vector<Pose>& out) {
   int n=std::max(1,static_cast<int>(std::ceil(distance(a,b)/step)));
   for(int i=1;i<=n;++i)out.push_back(blend(a,b,double(i)/n));
@@ -46,7 +64,7 @@ double lineDeviation(const Pose& p,const Pose& a,const Pose& b) {
 }
 }
 static int collisionCells(const Pose& pose,const costmap_2d::Costmap2D& map,
-              const std::vector<geometry_msgs::Point>& body,double padding) {
+              const std::vector<geometry_msgs::Point>& body,double padding, bool count_all = true) {
   if(body.size()<3 || !std::isfinite(pose.x+pose.y+pose.yaw)) return 10000;
   auto poly=body;costmap_2d::padFootprint(poly,padding);
   double xmin=1e30,ymin=1e30,xmax=-1e30,ymax=-1e30,c=std::cos(pose.yaw),s=std::sin(pose.yaw);
@@ -54,18 +72,25 @@ static int collisionCells(const Pose& pose,const costmap_2d::Costmap2D& map,
     xmin=std::min(xmin,p.x);xmax=std::max(xmax,p.x);ymin=std::min(ymin,p.y);ymax=std::max(ymax,p.y);}
   unsigned int x0,y0,x1,y1;
   if(!map.worldToMap(xmin,ymin,x0,y0)||!map.worldToMap(xmax,ymax,x1,y1))return 10000;
+  // Every cell shares the same polygon and half size. Project the polygon
+  // once and keep the exact SAT axes and contact tolerances for every cell.
+  std::vector<CollisionAxis> axes;
   int blocked=0;
   for(unsigned int y=y0;y<=y1;++y)for(unsigned int x=x0;x<=x1;++x){
     // 253 is a center-based inflation cost, not another physical obstacle.
     if(map.getCost(x,y)<costmap_2d::LETHAL_OBSTACLE)continue;
     double wx,wy;map.mapToWorld(x,y,wx,wy);
-    if(intersects(poly,wx,wy,map.getResolution()/2))++blocked;
+    if (axes.empty()) axes = collisionAxes(poly, map.getResolution() / 2);
+    if (intersects(axes, wx, wy)) {
+      if (!count_all) return 1;
+      ++blocked;
+    }
   }
   return blocked;
 }
 bool poseFree(const Pose& pose,const costmap_2d::Costmap2D& map,
               const std::vector<geometry_msgs::Point>& body,double padding) {
-  return collisionCells(pose,map,body,padding)==0;
+  return collisionCells(pose,map,body,padding,false)==0;
 }
 bool pathFree(const std::vector<Pose>& path,const costmap_2d::Costmap2D& map,
               const std::vector<geometry_msgs::Point>& body,double padding,Pose* failed_pose) {

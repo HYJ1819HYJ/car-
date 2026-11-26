@@ -4,17 +4,17 @@
 #include <serial/serial.h>
 #include <std_msgs/Bool.h>
 #include <std_msgs/String.h>
+#include <std_srvs/Trigger.h>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_ros/transform_broadcaster.h>
 #include <geometry_msgs/TransformStamped.h>
 
 #include <stm32_bridge/BlueTargetObservation.h>
+#include <stm32_bridge/gimbal_status.hpp>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <cstdlib>
-#include <sstream>
 #include <string>
 #include <vector>
 
@@ -30,18 +30,6 @@ constexpr uint16_t kFirmwareWidth = 640;
 constexpr uint16_t kFirmwareHeight = 480;
 
 double degToRad(double value) { return value * M_PI / 180.0; }
-
-bool parseIntegerField(const std::string& line, const std::string& key, long* value) {
-  const std::string token = key + "=";
-  const std::size_t begin = line.find(token);
-  if (begin == std::string::npos) return false;
-  const char* text = line.c_str() + begin + token.size();
-  char* end = nullptr;
-  const long parsed = std::strtol(text, &end, 10);
-  if (end == text) return false;
-  *value = parsed;
-  return true;
-}
 
 }  // namespace
 
@@ -72,6 +60,10 @@ class GimbalBridgeNode {
     pnh_.param<double>("camera_pitch_offset", camera_pitch_offset_, 0.0);
     pnh_.param<double>("camera_yaw_offset", camera_yaw_offset_, 0.0);
 
+    bool require_checksum = false;
+    pnh_.param("require_status_checksum", require_checksum, false);
+    status_parser_ = stm32_bridge::GimbalStatusParser(require_checksum);
+
     if (send_rate_ < 1.0) send_rate_ = 1.0;
     if (reconnect_period_ < 0.2) reconnect_period_ = 0.2;
     pan_to_ros_sign_ = pan_to_ros_sign_ < 0.0 ? -1.0 : 1.0;
@@ -81,6 +73,9 @@ class GimbalBridgeNode {
                                      &GimbalBridgeNode::observationCb, this);
     connected_pub_ = nh_.advertise<std_msgs::Bool>("/gimbal/connected", 1, true);
     ready_pub_ = nh_.advertise<std_msgs::Bool>("/gimbal/servo_ready", 1, true);
+    enabled_pub_ = nh_.advertise<std_msgs::Bool>("/gimbal/enabled", 1, true);
+    autonomy_sub_ = nh_.subscribe("/blue_autonomy/enable", 2, &GimbalBridgeNode::autonomyCb, this);
+    center_service_ = nh_.advertiseService("/gimbal/center", &GimbalBridgeNode::centerCb, this);
     locked_pub_ = nh_.advertise<std_msgs::Bool>("/gimbal/target_locked", 1, true);
     searching_pub_ = nh_.advertise<std_msgs::Bool>("/gimbal/searching", 1, true);
     status_pub_ = nh_.advertise<std_msgs::String>("/gimbal/status_text", 10);
@@ -116,17 +111,11 @@ class GimbalBridgeNode {
       serial_.open();
       serial_.flush();
       connected_ = true;
-      connection_time_ = now;
-      startup_stage_ = 0;
+      startup_.reset(center_on_connect_);
+      last_status_time_ = now;
       rx_line_.clear();
+      rx_overflow_ = false;
       ROS_INFO("Gimbal serial connected: %s", port_.c_str());
-      if (center_on_connect_) {
-        sendCommand(kCommandCenter);
-        startup_stage_ = 1;
-      } else if (auto_enable_) {
-        sendCommand(kCommandEnable);
-        startup_stage_ = 2;
-      }
       publishFlags();
     } catch (const std::exception& error) {
       connected_ = false;
@@ -146,6 +135,7 @@ class GimbalBridgeNode {
     if (connected_) ROS_ERROR("Gimbal serial disconnected: %s", reason.c_str());
     connected_ = false;
     servo_ready_ = false;
+    gimbal_enabled_ = false;
     target_locked_ = false;
     searching_ = false;
     if (serial_.isOpen()) serial_.close();
@@ -160,6 +150,20 @@ class GimbalBridgeNode {
     frame[2] = static_cast<uint8_t>(frame[0] + frame[1]);
     serial_.write(frame);
     if (command != kCommandStatus) last_control_command_ = ros::Time::now();
+  }
+
+  void autonomyCb(const std_msgs::Bool::ConstPtr& msg) {
+    if (autonomy_enabled_ && !msg->data && connected_ && servo_ready_)
+      startup_.requestCenter();
+    autonomy_enabled_ = msg->data;
+  }
+
+  bool centerCb(std_srvs::Trigger::Request&, std_srvs::Trigger::Response& reply) {
+    reply.success = connected_ && servo_ready_ && !autonomy_enabled_;
+    if (reply.success) startup_.requestCenter();
+    reply.message = reply.success ? "Gimbal center queued" :
+        "Gimbal must be online, ready and in standby";
+    return true;
   }
 
   void sendTarget(bool found, uint16_t x, uint16_t y) {
@@ -221,12 +225,13 @@ class GimbalBridgeNode {
       for (char byte : bytes) {
         if (byte == '\n') {
           if (!rx_line_.empty() && rx_line_.back() == '\r') rx_line_.pop_back();
-          if (!rx_line_.empty()) parseLine(rx_line_);
+          if (rx_overflow_) rejectLine();
+          else if (!rx_line_.empty()) parseLine(rx_line_);
           rx_line_.clear();
-        } else if (rx_line_.size() < 512) {
-          rx_line_.push_back(byte);
-        } else {
-          rx_line_.clear();
+          rx_overflow_ = false;
+        } else if (!rx_overflow_) {
+          if (rx_line_.size() < 512) rx_line_.push_back(byte);
+          else rx_overflow_ = true;
         }
       }
     } catch (const std::exception& error) {
@@ -234,24 +239,37 @@ class GimbalBridgeNode {
     }
   }
 
+  void rejectLine() {
+    ++bad_lines_;
+    ROS_WARN_THROTTLE(2.0, "Discarded invalid gimbal serial line (%zu total)", bad_lines_);
+  }
+
   void parseLine(const std::string& line) {
+    if (!stm32_bridge::printableGimbalLine(line)) {
+      rejectLine();
+      return;
+    }
+    if (line.find("STAT,") != std::string::npos || line.compare(0, 4, "STAT") == 0) {
+      stm32_bridge::GimbalStatus status;
+      if (!status_parser_.parse(line, &status)) {
+        rejectLine();
+        return;
+      }
+      gimbal_enabled_ = status.enabled;
+      servo_ready_ = status.ready;
+      target_locked_ = status.locked;
+      searching_ = status.searching;
+      pan_deg_ = status.pan_deg;
+      tilt_deg_ = status.tilt_deg;
+      last_status_time_ = ros::Time::now();
+      publishFlags();
+      publishJointState();
+    } else {
+      ROS_INFO("Gimbal: %s", line.c_str());
+    }
     std_msgs::String text;
     text.data = line;
     status_pub_.publish(text);
-    if (line.compare(0, 5, "STAT,") != 0) {
-      ROS_INFO("Gimbal: %s", line.c_str());
-      return;
-    }
-
-    long value = 0;
-    if (parseIntegerField(line, "ready", &value)) servo_ready_ = value != 0;
-    if (parseIntegerField(line, "lock", &value)) target_locked_ = value != 0;
-    if (parseIntegerField(line, "search", &value)) searching_ = value != 0;
-    if (parseIntegerField(line, "bearing10", &value)) pan_deg_ = value / 10.0;
-    if (parseIntegerField(line, "tilt10", &value)) tilt_deg_ = value / 10.0;
-    last_status_time_ = ros::Time::now();
-    publishFlags();
-    publishJointState();
   }
 
   void publishFlags() {
@@ -260,6 +278,8 @@ class GimbalBridgeNode {
     connected_pub_.publish(value);
     value.data = servo_ready_;
     ready_pub_.publish(value);
+    value.data = gimbal_enabled_;
+    enabled_pub_.publish(value);
     value.data = target_locked_;
     locked_pub_.publish(value);
     value.data = searching_;
@@ -304,28 +324,30 @@ class GimbalBridgeNode {
     }
 
     try {
+      readSerial();
+      if (!connected_) return;
       const ros::Time now = ros::Time::now();
-      if (startup_stage_ == 1 && auto_enable_ &&
-          (now - connection_time_).toSec() >= 0.8) {
-        sendCommand(kCommandEnable);
-        startup_stage_ = 2;
+      const double status_age = (now - last_status_time_).toSec();
+      if (status_age > 2.0 && (servo_ready_ || gimbal_enabled_ || target_locked_ || searching_)) {
+        servo_ready_ = gimbal_enabled_ = target_locked_ = searching_ = false;
+        publishFlags();
       }
-      // The MCU stores only one pending command until its main loop runs.
-      // Do not overwrite center/enable with a status query immediately after it.
-      if ((now - last_status_request_).toSec() >= 1.0 &&
+      const auto action = startup_.next(now.toSec(), servo_ready_, auto_enable_,
+                                        gimbal_enabled_, tilt_deg_);
+      using Action = stm32_bridge::GimbalStartup::Action;
+      if (action == Action::Center || action == Action::Enable) {
+        if (auto_enable_ && !gimbal_enabled_)
+          ROS_WARN_THROTTLE(2.0, "Gimbal mode=0 with auto-enable; restoring tracking");
+        sendCommand(action == Action::Center ? kCommandCenter : kCommandEnable);
+      }
+      // Status requests share the MCU's pending control command slot.
+      if (status_age > 0.6 && (now - last_status_request_).toSec() >= 1.0 &&
           (now - last_control_command_).toSec() >= 0.2) {
         sendCommand(kCommandStatus);
         last_status_request_ = now;
       }
       transmitObservation();
-      readSerial();
       publishCameraTf();
-      if ((now - last_status_time_).toSec() > 2.0) {
-        servo_ready_ = false;
-        target_locked_ = false;
-        searching_ = false;
-        publishFlags();
-      }
     } catch (const std::exception& error) {
       handleDisconnect(error.what());
     }
@@ -333,9 +355,10 @@ class GimbalBridgeNode {
 
   ros::NodeHandle nh_;
   ros::NodeHandle pnh_;
-  ros::Subscriber observation_sub_;
+  ros::Subscriber observation_sub_, autonomy_sub_;
+  ros::ServiceServer center_service_;
   ros::Publisher connected_pub_;
-  ros::Publisher ready_pub_;
+  ros::Publisher ready_pub_, enabled_pub_;
   ros::Publisher locked_pub_;
   ros::Publisher searching_pub_;
   ros::Publisher status_pub_;
@@ -369,7 +392,10 @@ class GimbalBridgeNode {
   bool servo_ready_{false};
   bool target_locked_{false};
   bool searching_{false};
-  int startup_stage_{0};
+  bool gimbal_enabled_{false}, autonomy_enabled_{false}, rx_overflow_{false};
+  std::size_t bad_lines_{0};
+  stm32_bridge::GimbalStartup startup_;
+  stm32_bridge::GimbalStatusParser status_parser_;
   double pan_deg_{0.0};
   double tilt_deg_{0.0};
   std::string rx_line_;
@@ -377,7 +403,6 @@ class GimbalBridgeNode {
   bool have_observation_{false};
   ros::Time observation_time_;
   ros::Time last_connect_attempt_;
-  ros::Time connection_time_;
   ros::Time last_target_send_;
   ros::Time last_status_request_;
   ros::Time last_status_time_;

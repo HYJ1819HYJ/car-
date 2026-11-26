@@ -24,9 +24,9 @@ import tf2_ros
 from geometry_msgs.msg import PoseWithCovarianceStamped, TransformStamped, Twist
 from move_base_msgs.msg import MoveBaseActionGoal
 from nav_msgs.msg import OccupancyGrid, Odometry
-from sensor_msgs.msg import JointState, LaserScan
+from sensor_msgs.msg import Image, JointState, LaserScan
 from std_msgs.msg import Bool, String
-from std_srvs.srv import Empty
+from std_srvs.srv import Empty, Trigger, TriggerResponse
 from stm32_bridge.msg import BlueTargetObservation
 
 
@@ -35,6 +35,7 @@ RANGES = np.linspace(-.75 * math.pi, .75 * math.pi, 1081)
 CAM_FOCAL = 640 / (2 * math.tan(math.radians(44)))
 WORKSPACE = Path(__file__).resolve().parents[3]
 START = (1.0, 0.0, 0.0)
+FALSE_BLUE_FIELD = "false_blue_deadend_and_narrow_dynamic"
 
 
 def yaw_of(quaternion):
@@ -52,9 +53,10 @@ def corners(rect):
 
 class Field:
     def __init__(self, name):
+        self.name = name
         self.verify_dropout = name == "box"
         self.camera_range = 5.48 if name == "box" else 7.5
-        if name == "branches":
+        if name in ("branches", "pre-start"):
             self.floors = [(0, -1.15, 6.25, 1.15), (4.00, -3.35, 6.25, 4.30)]
             self.walls = [(0, -1.15, 4.00, -1.15), (0, 1.15, 4.00, 1.15),
                           (0, -1.15, 0, 1.15), (4.00, -3.35, 4.00, -1.15),
@@ -62,12 +64,20 @@ class Field:
                           (4.00, -3.35, 6.25, -3.35), (4.00, 4.30, 6.25, 4.30)]
             self.attempts = [((5.125, -3.35), (0, 1), []),
                              ((5.125, 4.30), (0, -1), [(1.95, -.70, 2.45, -.20)])]
+        elif name == FALSE_BLUE_FIELD:
+            self.floors = [(0, -1.60, 7, 1.60), (4.40, -1.60, 7, 4.25)]
+            self.walls = [(0, -1.60, 7, -1.60), (0, -1.60, 0, 1.60),
+                          (0, 1.60, 4.40, 1.60), (4.40, 1.60, 4.40, 4.25),
+                          (4.40, 4.25, 7, 4.25), (7, -1.60, 7, 4.25)]
+            self.attempts = [((6.10, 4.25), (0, -1), [])]
+            self.dynamic_box = (4.41, 2.12, 5.62, 2.65)
         else:
             self.floors = [(0, -1.60, 7.0, 1.60)]
             self.walls = [(0, -1.60, 7.0, -1.60), (0, 1.60, 7.0, 1.60),
                           (0, -1.60, 0, 1.60), (7.0, -1.60, 7.0, 1.60)]
             self.attempts = [((7., 0.), (-1, 0), [(5.35, -.25, 5.85, .25)])] if name == "box" else [
                 ((7., 1.18), (-1, 0), [])]
+
 
     def occupancy(self):
         grid = OccupancyGrid()
@@ -185,6 +195,21 @@ class Simulation:
         self.reset_times = []
         self.terminal_events = []
         self.phases, self.goals = [], []
+        self.nav_events, self.planning_times = [], []
+        self.center_requests = 0
+        self.prestart_tilt = 0.0
+        self.false_stage = ""
+        self.ghost_after_cooldown = False
+        self.false_release_time = None
+        self.ghost_samples_after_release = 0
+        self.ghost_accepted_after_release = 0
+        self.image = rospy.Publisher("/usb_cam/image_raw", Image, queue_size=1)
+        top_noise = np.zeros((480, 640, 3), dtype=np.uint8)
+        top_noise[28:52, 312:328] = [255, 0, 0]
+        top_noise[454:480, 100:118] = [255, 0, 0]
+        self.noise_bytes = top_noise.tobytes()
+        self.top_detections = 0
+        self.top_frames_observed = 0
         self.footprint = np.array(rospy.get_param("/robot_geometry/footprint"), dtype=np.float32)
         self.map_pub = rospy.Publisher("/map", OccupancyGrid, queue_size=1, latch=True)
         self.mask = rospy.Publisher("/corner_clearance_map", OccupancyGrid, queue_size=1, latch=True)
@@ -197,7 +222,8 @@ class Simulation:
         self.enable = rospy.Publisher("/blue_autonomy/enable", Bool, queue_size=4)
         self.initialpose = rospy.Publisher("/initialpose", PoseWithCovarianceStamped, queue_size=1)
         self.gimbal = [rospy.Publisher("/gimbal/" + topic, Bool, queue_size=1, latch=True)
-                       for topic in ("connected", "servo_ready", "target_locked")]
+                       for topic in ("connected", "servo_ready", "target_locked", "enabled")]
+        self.center_service = rospy.Service("/gimbal/center", Trigger, self.on_center)
         self.tf = tf2_ros.TransformBroadcaster()
         self.static_tf = tf2_ros.StaticTransformBroadcaster()
         self.subscribers = [
@@ -207,17 +233,25 @@ class Simulation:
             rospy.Subscriber("/handoff/nav_state", String, self.on_nav_state, queue_size=5),
             rospy.Subscriber("/move_base/goal", MoveBaseActionGoal, self.on_goal, queue_size=5),
             rospy.Subscriber("/initialpose", PoseWithCovarianceStamped, self.on_reset, queue_size=1),
+            rospy.Subscriber("/blue_target/observation", BlueTargetObservation,
+                             self.on_detection, queue_size=3),
+            rospy.Subscriber("/blue_target/validated_observation", BlueTargetObservation,
+                             self.on_validated_detection, queue_size=3),
+            rospy.Subscriber("/move_base/SmoothGlobalPlanner/diagnostics", String,
+                             self.on_planner, queue_size=5),
         ]
         self.map_pub.publish(self.field.occupancy())
         self.mask.publish(self.field.occupancy())
-        for pub in self.gimbal:
-            pub.publish(True)
+        for pub, value in zip(self.gimbal, (True, True, False, True)):
+            pub.publish(value)
         now = rospy.Time.now()
         self.static_tf.sendTransform([
             self.transform(now, "map", "odom", 0, 0, 0),
             self.transform(now, "base_footprint", "laser", .315, 0, 0),
         ])
         names = {"move_base", "handoff_blue_navigator", "handoff_direct_visual", "visual_handoff_manager"}
+        if field.name == FALSE_BLUE_FIELD:
+            names.add("blue_detector")
         self.children = []
         try:
             for node in workspace_config.nodes:
@@ -270,8 +304,31 @@ class Simulation:
 
     def on_nav_state(self, message):
         self.nav_state = message.data
+        now = time.monotonic()
+        self.nav_events.append((now, message.data))
+        if "false blue target suppressed" in message.data:
+            self.false_release_time = now
         if self.nav_state.startswith("OBSERVE:"):
             self.observe_positions.append(tuple(self.pose))
+
+    def on_center(self, _request):
+        self.center_requests += 1
+        return TriggerResponse(success=True)
+
+    def on_detection(self, observation):
+        if observation.header.frame_id == "top_blue_noise":
+            self.top_frames_observed += 1
+            self.top_detections += observation.detected
+
+    def on_validated_detection(self, observation):
+        if (self.false_stage == "repeat" and observation.detected and
+                observation.header.frame_id == "ghost_blue"):
+            self.ghost_accepted_after_release += 1
+
+    def on_planner(self, message):
+        timing = json.loads(message.data).get("smoothing_ms")
+        if timing is not None:
+            self.planning_times.append(timing)
 
     def on_goal(self, message):
         p = message.goal.target_pose.pose.position
@@ -322,13 +379,18 @@ class Simulation:
         self.scan.publish(scan)
         self.obstacles.publish(scan)
 
+        ghost = self.false_stage in ("ghost", "repeat")
+        if ghost:
+            marker = (7.0, -.30)
         cam_x, cam_y = x + .145*c, y + .145*s
         dx, dy = marker[0] - cam_x, marker[1] - cam_y
         distance = math.hypot(dx, dy)
         absolute = math.atan2(dy, dx)
         bearing = angle(absolute - yaw)
-        visible = distance < self.field.camera_range and abs(bearing) <= math.radians(82)
-        if visible:
+        sweep = 165 if self.false_stage == "repeat" else 82
+        visible = distance < self.field.camera_range and abs(bearing) <= math.radians(sweep)
+        pan = max(math.radians(-135), min(math.radians(135), bearing)) if visible else 0.0
+        if visible and not ghost:
             wall_range = self.field.cast(cam_x, cam_y, np.array([absolute]))[0]
             # The simulated camera can see above the box. The laser cannot.
             visible = abs(wall_range - distance) <= .08
@@ -338,16 +400,34 @@ class Simulation:
         joint = JointState()
         joint.header.stamp = stamp
         joint.name = ["camera_pan_joint", "camera_tilt_joint"]
-        joint.position = [bearing if visible else 0.0, 0.0]
+        joint.position = [pan if visible else 0.0, self.prestart_tilt]
         self.joint.publish(joint)
         obs = BlueTargetObservation()
         obs.header.stamp, obs.detected = stamp, visible
         obs.image_width, obs.image_height = 640, 480
-        obs.center_x, obs.center_y = 320, 240
+        obs.center_x = 320 - CAM_FOCAL * math.tan(bearing - pan) if visible else 320
+        obs.center_y = 240
         obs.pixel_height = CAM_FOCAL * .297 / max(.12, distance)
         obs.pixel_width = obs.pixel_height * .71
         obs.contour_ratio = min(.09, obs.pixel_height * obs.pixel_width / (640 * 480))
-        self.obs.publish(obs)
+        if self.field.name != FALSE_BLUE_FIELD or self.false_stage == "finish":
+            self.obs.publish(obs)
+        elif ghost:
+            obs.header.frame_id = "ghost_blue"
+            obs.header.stamp += rospy.Duration(.017)
+            obs.contour_ratio = .002
+            self.obs.publish(obs)
+            if obs.detected and self.false_stage == "repeat" and self.ghost_after_cooldown:
+                self.ghost_samples_after_release += 1
+        elif self.false_stage == "top":
+            image = Image()
+            image.header.stamp, image.header.frame_id = stamp, "top_blue_noise"
+            image.width, image.height, image.encoding, image.step = 640, 480, "bgr8", 640 * 3
+            image.data = self.noise_bytes
+            self.image.publish(image)
+        else:
+            obs.detected = False
+            self.obs.publish(obs)
 
         # Audit independent of the map/costmaps and motion controllers.
         body = (self.footprint @ np.array([[c, s], [-s, c]], dtype=np.float32) +
@@ -355,7 +435,9 @@ class Simulation:
         area = cv2.contourArea(body)
         inside = sum(cv2.intersectConvexConvex(body, corners(floor))[0] for floor in self.field.floors)
         if len(self.field.floors) == 2:
-            inside -= cv2.intersectConvexConvex(body, corners((4., -1.15, 6.25, 1.15)))[0]
+            a, b = self.field.floors
+            overlap = (max(a[0], b[0]), max(a[1], b[1]), min(a[2], b[2]), min(a[3], b[3]))
+            inside -= cv2.intersectConvexConvex(body, corners(overlap))[0]
         hits_wall = inside < area - 1e-5
         hits_box = any(cv2.intersectConvexConvex(body, corners(box))[0] > 1e-6 for box in boxes)
         return body, hits_wall or hits_box
@@ -363,7 +445,7 @@ class Simulation:
     def run(self, name, index, marker, normal, boxes, timeout, field_directory):
         terminal = None
         try:
-            if name == "branches":
+            if name in ("branches", "pre-start"):
                 terminal = RaceTerminal(field_directory, index)
             self.attempt(name, index, marker, normal, boxes, timeout, terminal)
         finally:
@@ -396,6 +478,7 @@ class Simulation:
         stopped_reset = self.reset_times[-1]
         wait_for_reset(initial + 1, 2.5, .45)  # Persistent bias triggers a second retry.
         assert self.reset_times[-1] - stopped_reset >= 1.45
+        center_requests = self.center_requests
         terminal.trigger(b"r")
         wait_for_reset(initial + 2, .8)
         for _ in range(9):
@@ -403,22 +486,46 @@ class Simulation:
         transcript = terminal.read()
         assert transcript.count("定位偏离起点，自动复位") == 2, transcript
         assert "手动复位，已发布起点复位并清图" in transcript, transcript
+        assert self.center_requests == center_requests + 1, transcript
         assert "[READY]" in transcript.rsplit("\r\033[K", 1)[-1], transcript
         print("Verified pre-start retry after motion, cooldown retry, r reset and readiness gate.",
               flush=True)
+
+    def check_gimbal_prestart(self, terminal, marker, boxes, box_edges, rate):
+        for enabled, tilt, expected in [(False, 0.0, "云台未使能(mode=0)"),
+                                        (True, -13.5, "云台未平视(tilt=-13.5°)")]:
+            self.gimbal[-1].publish(enabled)
+            self.prestart_tilt = math.radians(tilt)
+            for _ in range(8):
+                self.simulate(0.0, marker, boxes, box_edges)
+                rate.sleep()
+            terminal.trigger(b" ")
+            for _ in range(6):
+                self.simulate(0.0, marker, boxes, box_edges)
+                rate.sleep()
+            assert expected in terminal.read(), terminal.read()
+            assert self.state.startswith("IDLE:"), self.state
+        self.prestart_tilt = 0.0
+        print("Verified pre-start mode=0 and tilted-camera launch gates.", flush=True)
+
+    @staticmethod
+    def box_edges(boxes):
+        return [edge for x0, y0, x1, y1 in boxes for edge in
+                ((x0, y0, x1, y0), (x0, y1, x1, y1), (x0, y0, x0, y1), (x1, y0, x1, y1))]
 
     def attempt(self, name, index, marker, normal, boxes, timeout, terminal):
         self.first_handoff = None
         self.dropout_samples = 0
         self.observe_positions = []
+        self.nav_events.clear()
+        self.planning_times.clear()
         self.phases.clear()
         self.terminal_events.clear()
         self.goals.clear()
         self.reset_seen = False
         collisions = 0
         crossings = []
-        box_edges = [edge for x0, y0, x1, y1 in boxes for edge in
-                     ((x0, y0, x1, y0), (x0, y1, x1, y1), (x0, y0, x0, y1), (x1, y0, x1, y1))]
+        box_edges = self.box_edges(boxes)
         rate = rospy.Rate(30)
         for _ in range(70 if index == 1 else 24):
             if self.enable.get_num_connections():
@@ -447,18 +554,64 @@ class Simulation:
                 self.simulate(0.0, marker, boxes, box_edges)
                 rate.sleep()
             assert self.reset_seen and self.pose == START
-            if index == 1:
+            if index == 1 and name == "pre-start":
+                self.check_gimbal_prestart(terminal, marker, boxes, box_edges, rate)
                 self.check_prestart_resets(terminal, marker, boxes, box_edges, rate)
             terminal.trigger(b" " if index == 1 else b"\n")
         resets_before_race = len(self.reset_times)
+        if name == "pre-start":
+            deadline = time.monotonic() + 3.0
+            while self.state.startswith("IDLE:"):
+                assert time.monotonic() < deadline and terminal.child.poll() is None, terminal.read()
+                self.simulate(0.0, marker, boxes, box_edges)
+                rate.sleep()
+            terminal.trigger(b"r")
+            for _ in range(8):
+                self.simulate(0.0, marker, boxes, box_edges)
+                rate.sleep()
+            assert len(self.reset_times) == resets_before_race
+            assert "已发布发车信号" in terminal.read(), terminal.read()
+            print(json.dumps(dict(scenario=name, attempt=index, launched=True,
+                                  post_launch_resets=0)), flush=True)
+            return
         started = last = time.monotonic()
         first_approach = None
+        ghost_started = false_released = None
+        dynamic_inserted = False
+        narrow_clearances = []
         still = 0.0
         while time.monotonic() - started < timeout:
             now = time.monotonic()
+            if name == FALSE_BLUE_FIELD:
+                if 1.5 <= now - started < 2.4:
+                    self.false_stage = "top"
+                elif ghost_started is None:
+                    self.false_stage = ""
+                    if self.pose[0] >= 4.15:
+                        assert not any(state.startswith("APPROACH:") for _, state in self.nav_events)
+                        ghost_started = now
+                        self.false_stage = "ghost"
+                elif false_released is None:
+                    if self.nav_state.startswith("APPROACH:"):
+                        self.false_stage = "absent"
+                    if self.false_release_time is not None:
+                        false_released = self.false_release_time
+                        self.false_stage = "repeat"
+                        boxes = [self.field.dynamic_box]
+                        box_edges = self.box_edges(boxes)
+                        dynamic_inserted = True
+                elif now - false_released < 3.4:
+                    self.false_stage = "repeat"
+                    self.ghost_after_cooldown = now - false_released >= 2.05
+                else:
+                    self.false_stage = "finish"
             body, collision = self.simulate(min(.06, now - last), marker, boxes, box_edges)
             last = now
             collisions += bool(collision)
+            if name == FALSE_BLUE_FIELD and dynamic_inserted:
+                _, y0, x1, y1 = self.field.dynamic_box
+                if y0 <= self.pose[1] <= y1:
+                    narrow_clearances.append(float(body[:, 0].min()) - x1)
             if name == "box" and 5.35 <= self.pose[0] <= 5.85:
                 crossings.append(abs(self.pose[1]))
             if self.state.startswith("TARGET_APPROACH:") and first_approach is None:
@@ -486,6 +639,18 @@ class Simulation:
                       first_approach=first_approach, handoff_distance=handoff_distance,
                       observed=self.observe_positions, still_seconds=still,
                       dropout_samples=self.dropout_samples, terminal_events=self.terminal_events)
+        if name == FALSE_BLUE_FIELD:
+            ghost_approach = next((t for t, state in self.nav_events if state.startswith("APPROACH:")), None)
+            report.update(top_detections=self.top_detections, top_frames=self.top_frames_observed,
+                          ghost_verification_seconds=None if false_released is None else false_released - ghost_approach,
+                          ghost_entrances=sum("entrance reached" in state and
+                                             (false_released is None or t <= false_released)
+                                             for t, state in self.nav_events),
+                          ghost_samples_after_release=self.ghost_samples_after_release,
+                          ghost_accepted_after_release=self.ghost_accepted_after_release,
+                          planner_max_ms=max(self.planning_times, default=0.0),
+                          dynamic_obstacle_inserted=dynamic_inserted,
+                          narrow_clearance=min(narrow_clearances) if narrow_clearances else None)
         print(json.dumps(report), flush=True)
         assert collisions == 0, "physical footprint touched a wall or box"
         assert len(self.reset_times) == resets_before_race, "localization reset after launch"
@@ -502,13 +667,22 @@ class Simulation:
         if name == "box":
             assert 1.10 < first_approach[0] < 5.10 and crossings and min(crossings) > .45
             assert self.dropout_samples > 0
+        if name == FALSE_BLUE_FIELD:
+            assert self.top_frames_observed >= 8 and self.top_detections == 0, report
+            assert false_released is not None and report["ghost_verification_seconds"] < 10.0, report
+            assert report["ghost_entrances"] == 2, report
+            assert self.ghost_samples_after_release > 5 and not self.ghost_accepted_after_release, report
+            assert not any(state.startswith("APPROACH:") and false_released < t < false_released + 3.4
+                           for t, state in self.nav_events)
+            assert dynamic_inserted and 0.0 < report["planner_max_ms"] < 170.0, report
+            assert narrow_clearances and min(narrow_clearances) > 0.0, report
         if name == "branches" and index == 1:
             assert any(position[1] > 2.5 for position in self.observe_positions)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("scenario", choices=("box", "corner", "branches"))
+    parser.add_argument("scenario", choices=("box", "corner", "branches", "pre-start", FALSE_BLUE_FIELD))
     parser.add_argument("--timeout", type=float, default=65)
     args = parser.parse_args(rospy.myargv()[1:])
     if os.environ.get("ROS_MASTER_URI") != MASTER:
