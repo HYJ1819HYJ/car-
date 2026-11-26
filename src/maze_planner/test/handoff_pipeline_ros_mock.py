@@ -21,7 +21,7 @@ import numpy as np
 import roslaunch
 import rospy
 import tf2_ros
-from geometry_msgs.msg import PoseWithCovarianceStamped, TransformStamped, Twist
+from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, TransformStamped, Twist
 from move_base_msgs.msg import MoveBaseActionGoal
 from nav_msgs.msg import OccupancyGrid, Odometry
 from sensor_msgs.msg import Image, JointState, LaserScan
@@ -36,6 +36,7 @@ CAM_FOCAL = 640 / (2 * math.tan(math.radians(44)))
 WORKSPACE = Path(__file__).resolve().parents[3]
 START = (1.0, 0.0, 0.0)
 FALSE_BLUE_FIELD = "false_blue_deadend_and_narrow_dynamic"
+WALL_ANCHOR_FIELD = "wall-anchor-upgrade"
 
 
 def yaw_of(quaternion):
@@ -77,9 +78,10 @@ class Field:
                           (0, -1.60, 0, 1.60), (7.0, -1.60, 7.0, 1.60)]
             self.attempts = [((7., 0.), (-1, 0), [(5.35, -.25, 5.85, .25)])] if name == "box" else [
                 ((7., 1.18), (-1, 0), [])]
+            if name == WALL_ANCHOR_FIELD:
+                self.attempts = [((7., 0.), (-1, 0), [])]
 
-
-    def occupancy(self):
+    def occupancy(self, omit_finish_wall=False):
         grid = OccupancyGrid()
         grid.header.frame_id = "map"
         grid.header.stamp = rospy.Time.now()
@@ -93,6 +95,8 @@ class Field:
                            oy + res * (np.arange(height) + .5))
         free = np.zeros(x.shape, dtype=bool)
         for x0, y0, x1, y1 in self.floors:
+            if omit_finish_wall:
+                x1 = ox + width * res
             free |= (x > x0) & (x < x1) & (y > y0) & (y < y1)
         grid.data = np.where(free, 0, 100).flatten().astype(np.int8).tolist()
         return grid
@@ -201,6 +205,12 @@ class Simulation:
         self.false_stage = ""
         self.ghost_after_cooldown = False
         self.false_release_time = None
+        self.anchor_observations = []
+        self.anchor_positions = []
+        self.anchor_entrances = []
+        self.anchor_reveal_time = None
+        self.repeat_observation = None
+        self.repeat_until = None
         self.ghost_samples_after_release = 0
         self.ghost_accepted_after_release = 0
         self.image = rospy.Publisher("/usb_cam/image_raw", Image, queue_size=1)
@@ -240,7 +250,12 @@ class Simulation:
             rospy.Subscriber("/move_base/SmoothGlobalPlanner/diagnostics", String,
                              self.on_planner, queue_size=5),
         ]
-        self.map_pub.publish(self.field.occupancy())
+        if field.name == WALL_ANCHOR_FIELD:
+            self.subscribers.extend([
+                rospy.Subscriber("/blue_target/map_pose", PoseStamped, self.on_anchor_position, queue_size=5),
+                rospy.Subscriber("/blue_target/approach_goal", PoseStamped, self.on_anchor_entrance, queue_size=5),
+            ])
+        self.map_pub.publish(self.field.occupancy(omit_finish_wall=field.name == WALL_ANCHOR_FIELD))
         self.mask.publish(self.field.occupancy())
         for pub, value in zip(self.gimbal, (True, True, False, True)):
             pub.publish(value)
@@ -301,6 +316,7 @@ class Simulation:
             self.terminal_events.append((message.data, tuple(self.pose)))
             if self.first_handoff is None:
                 self.first_handoff = tuple(self.pose)
+                self.anchor_terminal_time = time.monotonic()
 
     def on_nav_state(self, message):
         self.nav_state = message.data
@@ -320,7 +336,16 @@ class Simulation:
             self.top_frames_observed += 1
             self.top_detections += observation.detected
 
+    def on_anchor_position(self, goal):
+        self.anchor_positions.append((time.monotonic(), goal.pose.position.x))
+
+    def on_anchor_entrance(self, goal):
+        self.anchor_entrances.append((time.monotonic(), goal.pose.position.x))
+
     def on_validated_detection(self, observation):
+        if observation.header.frame_id == "unanchored_wall_marker":
+            self.anchor_observations.append(
+                (time.monotonic(), observation.header.stamp.to_nsec(), observation.detected))
         if (self.false_stage == "repeat" and observation.detected and
                 observation.header.frame_id == "ghost_blue"):
             self.ghost_accepted_after_release += 1
@@ -376,8 +401,16 @@ class Simulation:
         scan.angle_increment = RANGES[1] - RANGES[0]
         scan.range_min, scan.range_max = .10, 10.0
         scan.ranges = np.where(distances < 10.0, distances, np.inf).tolist()
-        self.scan.publish(scan)
         self.obstacles.publish(scan)
+        if self.field.name == WALL_ANCHOR_FIELD:
+            if x < 4.25:
+                # The costmap can still see the boundary. The filtered scan
+                # used to localize the marker loses returns from the far wall.
+                hit_x = laser_x + distances * np.cos(yaw + RANGES)
+                scan.ranges = np.where((distances < 10.0) & (hit_x < 6.99), distances, np.inf).tolist()
+            elif self.anchor_reveal_time is None:
+                self.anchor_reveal_time = time.monotonic()
+        self.scan.publish(scan)
 
         ghost = self.false_stage in ("ghost", "repeat")
         if ghost:
@@ -407,10 +440,22 @@ class Simulation:
         obs.image_width, obs.image_height = 640, 480
         obs.center_x = 320 - CAM_FOCAL * math.tan(bearing - pan) if visible else 320
         obs.center_y = 240
-        obs.pixel_height = CAM_FOCAL * .297 / max(.12, distance)
+        estimated_distance = distance
+        if self.field.name == WALL_ANCHOR_FIELD and x < 4.25:
+            estimated_distance -= .75
+        obs.pixel_height = CAM_FOCAL * .297 / max(.12, estimated_distance)
         obs.pixel_width = obs.pixel_height * .71
         obs.contour_ratio = min(.09, obs.pixel_height * obs.pixel_width / (640 * 480))
-        if self.field.name != FALSE_BLUE_FIELD or self.false_stage == "finish":
+        if self.field.name == WALL_ANCHOR_FIELD:
+            obs.header.frame_id = "unanchored_wall_marker"
+            now = time.monotonic()
+            if self.repeat_until is None and x >= 2.7:
+                self.repeat_observation = obs
+                self.repeat_until = now + .26
+            if self.repeat_until is not None and now < self.repeat_until:
+                obs = self.repeat_observation
+            self.obs.publish(obs)
+        elif self.field.name != FALSE_BLUE_FIELD or self.false_stage == "finish":
             self.obs.publish(obs)
         elif ghost:
             obs.header.frame_id = "ghost_blue"
@@ -515,6 +560,7 @@ class Simulation:
 
     def attempt(self, name, index, marker, normal, boxes, timeout, terminal):
         self.first_handoff = None
+        self.anchor_terminal_time = None
         self.dropout_samples = 0
         self.observe_positions = []
         self.nav_events.clear()
@@ -651,6 +697,22 @@ class Simulation:
                           planner_max_ms=max(self.planning_times, default=0.0),
                           dynamic_obstacle_inserted=dynamic_inserted,
                           narrow_clearance=min(narrow_clearances) if narrow_clearances else None)
+        if name == WALL_ANCHOR_FIELD:
+            reveal = self.anchor_reveal_time
+            first_terminal = self.anchor_terminal_time
+            frames = [(t, stamp, detected) for t, stamp, detected in self.anchor_observations
+                      if first_terminal is None or t < first_terminal]
+            times = [t for t, _, _ in frames]
+            report.update(
+                projected_x_before=[x for t, x in self.anchor_positions if reveal is None or t < reveal][-4:],
+                projected_x_after=[x for t, x in self.anchor_positions if reveal is not None and t >= reveal][-4:],
+                entrance_x=[x for _, x in self.anchor_entrances],
+                validated_count=len(frames),
+                rejected_count=sum(not detected for _, _, detected in frames),
+                duplicate_stamps=len(frames) - len({stamp for _, stamp, _ in frames}),
+                maximum_validated_gap=max((b - a for a, b in zip(times, times[1:])), default=0),
+                validated_to_handoff=None if first_terminal is None or not times else first_terminal - times[-1],
+            )
         print(json.dumps(report), flush=True)
         assert collisions == 0, "physical footprint touched a wall or box"
         assert len(self.reset_times) == resets_before_race, "localization reset after launch"
@@ -676,13 +738,25 @@ class Simulation:
                            for t, state in self.nav_events)
             assert dynamic_inserted and 0.0 < report["planner_max_ms"] < 170.0, report
             assert narrow_clearances and min(narrow_clearances) > 0.0, report
+        if name == WALL_ANCHOR_FIELD:
+            assert report["projected_x_before"] and all(
+                abs(x - 6.25) < .03 for x in report["projected_x_before"]), report
+            assert report["projected_x_after"] and all(
+                abs(x - 7.0) < .03 for x in report["projected_x_after"]), report
+            assert any(abs(x - 5.45) < .04 for x in report["entrance_x"]), report
+            assert any(abs(x - 6.20) < .04 for x in report["entrance_x"]), report
+            assert report["validated_count"] > 40 and report["rejected_count"] == 0, report
+            assert report["duplicate_stamps"] >= 2 and report["maximum_validated_gap"] < .20, report
+            assert report["validated_to_handoff"] < .20, report
+            assert self.phases[self.phases.index("TARGET_APPROACH"):] == [
+                "TARGET_APPROACH", "TERMINAL_PARK", "COMPLETE"], report
         if name == "branches" and index == 1:
             assert any(position[1] > 2.5 for position in self.observe_positions)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("scenario", choices=("box", "corner", "branches", "pre-start", FALSE_BLUE_FIELD))
+    parser.add_argument("scenario", choices=("box", "corner", "branches", "pre-start", FALSE_BLUE_FIELD, WALL_ANCHOR_FIELD))
     parser.add_argument("--timeout", type=float, default=65)
     args = parser.parse_args(rospy.myargv()[1:])
     if os.environ.get("ROS_MASTER_URI") != MASTER:

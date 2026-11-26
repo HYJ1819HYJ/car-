@@ -657,14 +657,22 @@ class BlueGoalNavigator {
     if (estimateTarget(*msg, &estimate)) addEstimate(estimate);
   }
 
-  bool addEstimate(const TargetEstimate& estimate) {
+  bool canAnchorLockedTarget(const TargetEstimate& estimate,
+                             const maze_planner::Point2& robot) const {
+    if (!target_locked_ || locked_target_.wall_valid || !estimate.wall_valid) return false;
+    const auto previous = lockedTargetPoint() - robot;
+    const auto current = maze_planner::Point2(estimate.x, estimate.y) - robot;
+    return std::abs(yawDifference(std::atan2(previous.y, previous.x),
+                                  std::atan2(current.y, current.x))) <= .25;
+  }
+
+  void addEstimate(const TargetEstimate& estimate, const maze_planner::Point2& robot = {}) {
     const maze_planner::Point2 point(estimate.x, estimate.y);
-    if (competition_mode_ &&
-        (false_targets_.blocks(point, estimate.contour_ratio, ros::Time::now()) ||
-         (target_locked_ && maze_planner::norm(point - lockedTargetPoint()) >
-                                maze_planner::FinishTargetVerification::kAssociationRadius)))
-      return false;
-    if (!estimates_.empty() && estimate.stamp <= estimates_.back().stamp) return false;
+    if (competition_mode_ && target_locked_ &&
+        maze_planner::norm(point - lockedTargetPoint()) >
+            maze_planner::FinishTargetVerification::kAssociationRadius &&
+        !canAnchorLockedTarget(estimate, robot)) return;
+    if (!estimates_.empty() && estimate.stamp <= estimates_.back().stamp) return;
     if (competition_mode_ && target_locked_) verification_.seen(estimate.stamp);
     target_pose_valid_ = true;
     latest_target_ = estimate;
@@ -678,7 +686,6 @@ class BlueGoalNavigator {
     target.pose.position.y = estimate.y;
     target.pose.orientation.w = 1.0;
     target_pose_pub_.publish(target);
-    return true;
   }
 
   bool estimateTarget(const stm32_bridge::BlueTargetObservation& observation,
@@ -1236,8 +1243,12 @@ class BlueGoalNavigator {
       const auto frame = pending_observation_;
       pending_observation_.reset();
       TargetEstimate estimate;
-      if (frame->detected && estimateTarget(*frame, &estimate) && addEstimate(estimate)) {
+      if (frame->detected && estimateTarget(*frame, &estimate) &&
+          !false_targets_.blocks({estimate.x, estimate.y}, estimate.contour_ratio, now)) {
+        // Handoff validates the current sight line and may use a frame even
+        // when the navigator cannot use it to update its locked map target.
         validated_observation_pub_.publish(frame);
+        addEstimate(estimate, robot);
       } else {
         auto rejected = *frame;
         rejected.detected = false;
@@ -1255,11 +1266,28 @@ class BlueGoalNavigator {
         locked_target_ = stable;
         verification_.reset();
         verification_.seen(estimates_.back().stamp);
-      } else if (maze_planner::norm(
-                     maze_planner::Point2(stable.x, stable.y) - lockedTargetPoint()) <=
-                     maze_planner::FinishTargetVerification::kAssociationRadius &&
-                 (stable.wall_valid || !locked_target_.wall_valid)) {
-        locked_target_ = stable;
+      } else {
+        const double shift = maze_planner::norm(
+            maze_planner::Point2(stable.x, stable.y) - lockedTargetPoint());
+        const bool nearby = shift <= maze_planner::FinishTargetVerification::kAssociationRadius;
+        if (canAnchorLockedTarget(stable, robot) ||
+            (nearby && (stable.wall_valid || !locked_target_.wall_valid))) {
+          if (stable.wall_valid && !locked_target_.wall_valid) {
+            ROS_INFO("Blue target anchored to wall at (%.2f, %.2f), shifted %.2f m",
+                     stable.x, stable.y, shift);
+            rejected_entrances_.clear();
+            verification_.reset();
+            verification_.seen(estimates_.back().stamp);
+            entrance_unavailable_since_ = ros::Time();
+            if (!nearby && goal_active_ && goal_kind_ == GoalKind::APPROACH) {
+              // The current entrance still refers to the old optical position.
+              move_base_.cancelGoal();
+              goal_active_ = false;
+              goal_kind_ = GoalKind::NONE;
+            }
+          }
+          locked_target_ = stable;
+        }
       }
     }
 
