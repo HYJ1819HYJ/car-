@@ -56,6 +56,24 @@ TEST(VisualTracking, TargetHeightUsesPositiveImageAndJointPitchDown) {
   }
 }
 
+TEST(VisualTracking, PitchOffsetRecoversDistantPaperAndRejectsHighSign) {
+  constexpr double camera_z = .42, cy = 240.0, fy = 417.0;
+  constexpr double joint_tilt = 6.2 * M_PI / 180.0, pitch_offset = -.056;
+  constexpr double min_z = .02, max_z = .52, paper_range = 5.9;
+
+  const double paper_pixel_down = std::atan2(237.4 - cy, fy);
+  const double corrected_down = joint_tilt + pitch_offset + paper_pixel_down;
+  EXPECT_FALSE(maze_planner::plausibleTargetHeight(
+      camera_z, paper_range, joint_tilt + paper_pixel_down, min_z, max_z));
+  EXPECT_TRUE(maze_planner::plausibleTargetHeight(
+      camera_z, paper_range, corrected_down, min_z, max_z));
+  EXPECT_NEAR(camera_z - paper_range * std::sin(corrected_down), .15, .01);
+
+  const double sign_down = joint_tilt + pitch_offset + std::atan2(160.0 - cy, fy);
+  EXPECT_GT(camera_z - 5.0 * std::sin(sign_down), .80);
+  EXPECT_FALSE(maze_planner::plausibleTargetHeight(camera_z, 5.0, sign_down, min_z, max_z));
+}
+
 TEST(GimbalHistory, InterpolatesThroughDroppedFramesAndSupportsLegacyRate) {
   maze_planner::GimbalHistory history;
   sensor_msgs::JointState joint;

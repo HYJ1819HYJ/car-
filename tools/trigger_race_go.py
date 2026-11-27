@@ -40,6 +40,8 @@ class Race:
         self.scan_time = 0.0
         self.joint_reading = (0.0, math.nan)
         self.odom_reading = (0.0, False, 0.0)
+        self.race_fired = False
+        self.motion_start_time = None
         self.amcl_reading = (0.0, math.inf, math.inf, math.inf)
         self.pose_reset_time = 0.0
         self.ready = self.connected = self.reached = False
@@ -123,6 +125,8 @@ class Race:
         now = time.monotonic()
         previous_time, was_still, settled_at = self.odom_reading
         still = math.hypot(twist.linear.x, twist.linear.y) < .025 and abs(twist.angular.z) < .04
+        if self.race_fired and self.motion_start_time is None and not still:
+            self.motion_start_time = now
         if still and not was_still and now - previous_time <= .5:
             settled_at = now
         self.odom_reading = (now, still, settled_at)
@@ -275,6 +279,8 @@ class Race:
                         if not self.alive():
                             break
                         if self.status(False):
+                            self.motion_start_time = None
+                            self.race_fired = True
                             self.enable.publish(True)
                             fired = True
                             elapsed = 1000 * (time.monotonic() - start)
@@ -304,7 +310,15 @@ class Race:
                 elapsed = min(3, int(now - still_since))
                 if elapsed > reported:
                     reported = elapsed
-                    text = "，已满足静止计时，可按 Ctrl+C 结束本轮。" if elapsed == 3 else ""
+                    if elapsed == 3:
+                        if self.motion_start_time is not None:
+                            duration = max(0.0, now - self.motion_start_time)
+                            timing = f"，本轮用时 {duration:.2f} s（自起步有速度至静止 3 s）"
+                        else:
+                            timing = "，本轮用时 --（未检测到有效起步速度）"
+                        text = f"，已满足静止计时{timing}，可按 Ctrl+C 结束本轮。"
+                    else:
+                        text = ""
                     print(f"静止 {elapsed:.1f} s{text}", flush=True)
             else:
                 still_since = None

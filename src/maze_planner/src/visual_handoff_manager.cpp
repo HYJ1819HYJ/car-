@@ -1,5 +1,7 @@
 #include <ros/ros.h>
+#include <geometry_msgs/PoseStamped.h>
 #include <geometry_msgs/Twist.h>
+#include <move_base_msgs/MoveBaseActionFeedback.h>
 #include <sensor_msgs/CameraInfo.h>
 #include <sensor_msgs/JointState.h>
 #include <sensor_msgs/LaserScan.h>
@@ -28,6 +30,10 @@ class VisualHandoffManager {
     pnh_.param("max_handoff_yaw_rad", max_handoff_yaw_rad_, .40);
     pnh_.param("entrance_max_handoff_lateral", entrance_max_handoff_lateral_, .75);
     pnh_.param("entrance_max_handoff_yaw_rad", entrance_max_handoff_yaw_rad_, .65);
+    pnh_.param("cruise_max_speed", cruise_max_speed_, .60);
+    pnh_.param("cruise_max_turn", cruise_max_turn_, .60);
+    pnh_.param("approach_slowdown_distance", approach_slowdown_distance_, 2.20);
+    pnh_.param("approach_full_slow_distance", approach_full_slow_distance_, 1.35);
     pnh_.param("approach_max_speed", approach_max_speed_, .35);
     pnh_.param("approach_max_turn", approach_max_turn_, .40);
     approach_max_speed_ = std::max(0.0, approach_max_speed_);
@@ -37,6 +43,7 @@ class VisualHandoffManager {
     pnh_.param<double>("camera_y", camera_y_, 0.0);
     pnh_.param<double>("paper_height", paper_height_, .297);
     pnh_.param<double>("fallback_hfov_deg", fallback_hfov_deg_, 88.0);
+    pnh_.param<double>("camera_pitch_offset", camera_pitch_offset_, 0.0);
     pnh_.param<double>("max_target_range", max_target_range_, 8.0);
     pnh_.param<double>("range_absolute_tolerance", range_absolute_tolerance_, .25);
     pnh_.param<double>("range_relative_tolerance", range_relative_tolerance_, .20);
@@ -71,6 +78,10 @@ class VisualHandoffManager {
     nav_cmd_sub_ = nh_.subscribe("/handoff/cmd_vel_nav", 2, &VisualHandoffManager::navCmdCb, this);
     visual_cmd_sub_ = nh_.subscribe("/handoff/cmd_vel_visual", 2, &VisualHandoffManager::visualCmdCb, this);
     nav_state_sub_ = nh_.subscribe("/handoff/nav_state", 3, &VisualHandoffManager::navStateCb, this);
+    robot_pose_sub_ = nh_.subscribe("/move_base/feedback", 1,
+                                    &VisualHandoffManager::robotPoseCb, this);
+    approach_goal_sub_ = nh_.subscribe("/blue_target/approach_goal", 1,
+                                       &VisualHandoffManager::approachGoalCb, this);
     visual_state_sub_ = nh_.subscribe("/handoff/visual_state", 3, &VisualHandoffManager::visualStateCb, this);
     visual_goal_sub_ = nh_.subscribe("/handoff/visual_goal_reached", 2,
                                       &VisualHandoffManager::visualGoalCb, this);
@@ -112,6 +123,8 @@ class VisualHandoffManager {
     visual_state_.clear();
     visual_blocked_since_ = ros::Time();
     race_start_ = ros::Time::now();
+    last_target_range_time_ = ros::Time();
+    robot_pose_received_ = approach_goal_received_ = ros::Time();
     recheck_after_ = ros::Time();
     checked_scan_stamp_ = ros::Time(0);
     publishStop();
@@ -133,15 +146,45 @@ class VisualHandoffManager {
     publishBool(goal_pub_, false);
     publishState("IDLE: automatic handoff disabled");
   }
+  void robotPoseCb(const move_base_msgs::MoveBaseActionFeedback::ConstPtr& msg) {
+    robot_pose_ = msg->feedback.base_position;
+    robot_pose_received_ = ros::Time::now();
+  }
+  void approachGoalCb(const geometry_msgs::PoseStamped::ConstPtr& msg) {
+    approach_goal_ = *msg;
+    approach_goal_received_ = ros::Time::now();
+  }
+  double targetDistance(const ros::Time& now) const {
+    const auto fresh = [&](const ros::Time& stamp, double max_age) {
+      const double age = (now - stamp).toSec();
+      return !stamp.isZero() && stamp >= race_start_ && age >= 0.0 && age <= max_age;
+    };
+    if (fresh(last_target_range_time_, 1.0)) return last_target_range_;
+    if (fresh(robot_pose_received_, 1.5) && fresh(approach_goal_received_, 1.5) &&
+        fresh(robot_pose_.header.stamp, 1.5) && fresh(approach_goal_.header.stamp, 1.5) &&
+        !approach_goal_.header.frame_id.empty() &&
+        approach_goal_.header.frame_id == robot_pose_.header.frame_id) {
+      const auto& robot = robot_pose_.pose.position;
+      const auto& goal = approach_goal_.pose.position;
+      return std::hypot(goal.x - robot.x, goal.y - robot.y) + .80;
+    }
+    return 0.0;
+  }
   void navCmdCb(const geometry_msgs::Twist::ConstPtr& msg) {
     if (mode_ != Mode::NAVIGATION) return;
     geometry_msgs::Twist out = *msg;
     if (nav_state_.find("APPROACH:") == 0) {
       const double v = std::abs(out.linear.x), w = std::abs(out.angular.z);
-      const double vs = v > approach_max_speed_ ? approach_max_speed_ / v : 1.0;
-      const double ws = w > approach_max_turn_ ? approach_max_turn_ / w : 1.0;
-      out.linear.x *= std::min(vs, ws);
-      out.angular.z *= std::min(vs, ws);
+      double max_v, max_w;
+      maze_planner::approachVelocityLimits(targetDistance(ros::Time::now()),
+          approach_slowdown_distance_, approach_full_slow_distance_,
+          cruise_max_speed_, cruise_max_turn_, approach_max_speed_, approach_max_turn_,
+          &max_v, &max_w);
+      const double vs = v > max_v ? max_v / v : 1.0;
+      const double ws = w > max_w ? max_w / w : 1.0;
+      const double scale = std::min(vs, ws);
+      out.linear.x *= scale;
+      out.angular.z *= scale;
     }
     command_pub_.publish(out);
   }
@@ -149,6 +192,7 @@ class VisualHandoffManager {
     if (mode_ == Mode::VISUAL) command_pub_.publish(*msg);
   }
   void navStateCb(const std_msgs::String::ConstPtr& msg) {
+    if (msg->data.find("APPROACH:") != 0) last_target_range_time_ = ros::Time();
     nav_state_ = msg->data;
     if (nav_state_.find("APPROACH: waiting for a clear") != 0)
       nav_wait_since_ = ros::Time();
@@ -207,9 +251,10 @@ class VisualHandoffManager {
       fx = observation_.image_width/(2.0*std::tan(.5*hfov));
       fy = fx;
     }
-    if (!maze_planner::visualBearing(pan, tilt, observation_.center_x,
+    const double optical_tilt = tilt + camera_pitch_offset_;
+    if (!maze_planner::visualBearing(pan, optical_tilt, observation_.center_x,
                                       observation_.center_y, cx, cy, fx, fy, bearing)) return false;
-    const double down = tilt+std::atan2(observation_.center_y-cy, fy);
+    const double down = optical_tilt+std::atan2(observation_.center_y-cy, fy);
     *horizontal_range = fy*paper_height_/observation_.pixel_height*std::cos(down);
     return std::isfinite(*horizontal_range) && *horizontal_range > 0.0 &&
            *horizontal_range <= max_target_range_;
@@ -233,6 +278,9 @@ class VisualHandoffManager {
       *reason = "blue marker not localized in view";
       return false;
     }
+
+    last_target_range_ = visual_range;
+    last_target_range_time_ = observation_.header.stamp;
 
     std::vector<maze_planner::Point2> points;
     std::vector<stm32_bridge::SafetyPoint> obstacles;
@@ -258,6 +306,10 @@ class VisualHandoffManager {
     const maze_planner::Point2 tangent(-wall.outward.y, wall.outward.x);
     const double lateral = std::abs(maze_planner::dot(wall.marker, tangent));
     const double depth = -maze_planner::dot(wall.marker, wall.outward);
+    if (std::isfinite(depth) && depth > 0.0) {
+      last_target_range_ = depth;
+      last_target_range_time_ = std::min(observation_.header.stamp, scan_.header.stamp);
+    }
     const double range = maze_planner::norm(wall.marker);
     const double yaw = std::abs(maze_planner::parkingYaw(wall));
     const bool close_and_aligned = range <= max_handoff_distance_ &&
@@ -341,7 +393,10 @@ class VisualHandoffManager {
   ros::Publisher command_pub_, nav_enable_pub_, visual_enable_pub_, goal_pub_, state_pub_;
   ros::Subscriber enable_sub_, nav_cmd_sub_, visual_cmd_sub_, nav_state_sub_, visual_state_sub_;
   ros::Subscriber visual_goal_sub_, observation_sub_, joint_sub_, scan_sub_, camera_sub_;
+  ros::Subscriber robot_pose_sub_, approach_goal_sub_;
   ros::Timer timer_;
+  geometry_msgs::PoseStamped robot_pose_, approach_goal_;
+  ros::Time robot_pose_received_, approach_goal_received_, last_target_range_time_;
   maze_planner::HandoffCorridorParameters corridor_params_;
   stm32_bridge::SafetyFootprint footprint_, self_footprint_;
   stm32_bridge::BlueTargetObservation observation_;
@@ -358,8 +413,12 @@ class VisualHandoffManager {
   double max_handoff_lateral_{.38}, max_handoff_yaw_rad_{.40};
   double entrance_max_handoff_lateral_{.75}, entrance_max_handoff_yaw_rad_{.65};
   double approach_max_speed_{.35}, approach_max_turn_{.40};
+  double cruise_max_speed_{.60}, cruise_max_turn_{.60};
+  double approach_slowdown_distance_{2.20}, approach_full_slow_distance_{1.35};
+  double last_target_range_{0.0};
   maze_planner::GimbalHistory gimbal_history_;
   double camera_x_{.145}, camera_y_{0.0}, paper_height_{.297}, fallback_hfov_deg_{88.0};
+  double camera_pitch_offset_{0.0};
   double max_target_range_{8.0}, range_absolute_tolerance_{.25}, range_relative_tolerance_{.20};
   double scan_timeout_{.5}, observation_timeout_{.5}, joint_timeout_{1.5}, max_sensor_skew_{.5};
   std::string state_, nav_state_, visual_state_;

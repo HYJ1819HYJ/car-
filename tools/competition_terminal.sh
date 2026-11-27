@@ -14,13 +14,86 @@ fields_root="$root/outputs/competition-fields"
 
 if [[ "$action" == help || "$action" == --help ]]; then
   printf '用法：bash tools/competition_terminal.sh prepare\n'
+  printf '      bash tools/competition_terminal.sh check\n'
   printf '      bash tools/competition_terminal.sh maps\n'
-  printf '      bash tools/competition_terminal.sh map 场次名\n'
+  printf '      bash tools/competition_terminal.sh map [场次名]\n'
   printf '      bash tools/competition_terminal.sh ready [场次名] [--map 源地图场次]\n'
   printf '      bash tools/competition_terminal.sh {rviz|save|status|go|record|stop} [场次名]\n'
-  printf '\n提示：ready 不传场次名或目标场次缺地图时，会在交互终端弹出已有地图选择菜单；\n'
+  printf '\n提示：check 检查雷达网口/IP、底盘与云台串口、USB 相机、手柄及残留容器；\n'
+  printf '      map 不传场次名或场次已存在时，会在交互终端提示输入新的场次名；\n'
+  printf '      ready 不传场次名或目标场次缺地图时，会在交互终端弹出已有地图选择菜单；\n'
   printf '      rviz/save/status/go/record/stop 省略场次名时会自动匹配当前运行中的场次。\n'
   exit 0
+fi
+
+if [[ "$action" == check ]]; then
+  lidar_iface="${ROBOT_LIDAR_IFACE:-enp0s31f6}"
+  lidar_ip="${ROBOT_LIDAR_IP:-192.168.198.2}"
+  cam="${ROBOT_CAMERA_DEVICE:-/dev/v4l/by-id/usb-HRY_USB_Camera_20191109-video-index0}"
+  check_rc=0
+
+  if command -v nmcli >/dev/null 2>&1; then
+    nmcli connection up 'LakiBeam-RJ45' ifname "$lidar_iface" >/dev/null 2>&1 || true
+  fi
+  printf '=== 1. 雷达网口与物理链路 ===\n'
+  ip -br addr show "$lidar_iface" 2>/dev/null || printf '⚠️ 未找到网卡 %s\n' "$lidar_iface"
+  if ip -br link show "$lidar_iface" 2>/dev/null | grep -q ' UP '; then
+    printf '✅ 雷达网口物理链路 UP\n'
+    if ip -br addr show "$lidar_iface" 2>/dev/null | grep -q '192\.168\.198\.'; then
+      printf '✅ 雷达网口已配置 192.168.198.x 网段\n'
+    else
+      printf '❌ 雷达网口缺少 192.168.198.1/24 地址\n'
+      check_rc=1
+    fi
+    if ping -c 1 -W 1 "$lidar_ip" >/dev/null 2>&1; then
+      printf '✅ 雷达 IP (%s) 可达\n' "$lidar_ip"
+    else
+      printf '⚠️ ping %s 未回应（部分固件禁 ping，进 map/ready 后以 /scan 为准）\n' "$lidar_ip"
+    fi
+  else
+    printf '❌ 雷达网口仍为 DOWN：请检查雷达电源开关与网线是否插紧！\n'
+    check_rc=1
+  fi
+
+  printf '=== 2. 串口设备 ===\n'
+  for rev in 8132 8134; do
+    name="底盘"
+    [[ "$rev" == "8134" ]] && name="云台"
+    found=""
+    for d in /dev/ttyUSB*; do
+      [[ -c "$d" ]] || continue
+      if udevadm info -q property -n "$d" 2>/dev/null | grep -Fxq "ID_REVISION=$rev"; then
+        found="$d"
+        break
+      fi
+    done
+    if [[ -n "$found" ]]; then
+      printf '✅ %s串口 (%s) -> %s\n' "$name" "$rev" "$found"
+    else
+      printf '❌ 未检测到%s串口 (%s)\n' "$name" "$rev"
+      check_rc=1
+    fi
+  done
+
+  printf '=== 3. 相机与手柄 ===\n'
+  if [[ -c "$cam" ]]; then
+    printf '✅ USB 相机 -> %s\n' "$(readlink -f "$cam")"
+  else
+    printf '❌ 未检测到 USB 相机 (%s)\n' "$cam"
+    check_rc=1
+  fi
+  if [[ -c /dev/input/js0 ]]; then
+    printf '✅ 手柄 -> /dev/input/js0\n'
+  else
+    printf 'ℹ️ 未连接手柄（手推建图无需手柄）\n'
+  fi
+
+  printf '=== 4. 残留容器检查 ===\n'
+  docker ps --filter "name=car-competition" --format 'table {{.Names}}\t{{.Status}}\t{{.Label "competition.field"}}\t{{.Label "competition.phase"}}'
+  if [[ -n "$(docker ps -q --filter "name=car-competition")" ]]; then
+    printf '⚠️ 检测到运行中的比赛容器；如需清理请执行：bash tools/competition_terminal.sh stop\n'
+  fi
+  exit "$check_rc"
 fi
 
 mounts=(
@@ -172,6 +245,50 @@ copy_field_map() {
   printf '已将地图与起点从 %s 复制到 %s（本场录包将独立保存在 %s/bags/）。\n' "$src_field" "$dst_field" "$dst_dir"
 }
 
+suggest_new_field_name() {
+  local base="match-$(date +%m%d-%H%M)"
+  local candidate="$base" suffix=2
+  while [[ -e "$fields_root/$candidate" ]]; do
+    candidate="${base}-${suffix}"
+    suffix=$((suffix + 1))
+  done
+  printf '%s\n' "$candidate"
+}
+
+prompt_new_map_field() {
+  local prompt_header="$1"
+  local default_name candidate
+  printf '%s\n' "$prompt_header" >&2
+  while true; do
+    default_name="$(suggest_new_field_name)"
+    printf '请输入新的地图/场次名（字母/数字/_/-/.，直接回车用 %s，输入 q 取消）：' "$default_name" >&2
+    if ! IFS= read -r candidate; then
+      printf '\n已取消。\n' >&2
+      return 2
+    fi
+    candidate="${candidate#"${candidate%%[![:space:]]*}"}"
+    candidate="${candidate%"${candidate##*[![:space:]]}"}"
+    if [[ -z "$candidate" ]]; then
+      candidate="$default_name"
+    elif [[ "$candidate" == q || "$candidate" == Q ]]; then
+      printf '已取消。\n' >&2
+      return 2
+    fi
+    if ! valid_field_name "$candidate"; then
+      printf '场次名无效：%s（请以字母/数字/下划线开头，仅含字母、数字、_、-、.）。\n' "$candidate" >&2
+      continue
+    fi
+    if [[ -e "$fields_root/$candidate" ]]; then
+      printf '场次 %s 已存在，请换一个名称。\n' "$candidate" >&2
+      continue
+    fi
+    field="$candidate"
+    field_dir="$fields_root/$field"
+    printf '已选择新建图场次名：%s\n' "$field" >&2
+    return 0
+  done
+}
+
 detect_running_field() {
   local live
   live="$(docker inspect --format '{{ index .Config.Labels "competition.field" }}' "$container" 2>/dev/null || true)"
@@ -193,7 +310,17 @@ fi
 
 map_source=""
 case "$action" in
-  map|turn)
+  map)
+    if [[ $# -eq 1 ]]; then
+      field=""
+    elif [[ $# -eq 2 ]] && valid_field_name "$field"; then
+      :
+    else
+      printf '用法：bash tools/competition_terminal.sh map [场次名]\n' >&2
+      exit 2
+    fi
+    ;;
+  turn)
     [[ $# -eq 2 ]] && valid_field_name "$field" || {
       printf '请提供场次名，例如 retest-01。\n' >&2
       exit 2
@@ -372,6 +499,23 @@ case "$action" in
     if docker inspect "$container" >/dev/null 2>&1 || [[ -n "$(ss -Hlt 'sport = :11311')" ]]; then
       printf '已有 ROS 任务运行，请先停止。\n' >&2; exit 1
     fi
+    if [[ "$action" == map ]]; then
+      if [[ -z "$field" ]]; then
+        if [[ -t 0 ]]; then
+          prompt_new_map_field '请输入本次建图的新场次名：' || exit 1
+        else
+          printf '未指定场次名，且当前不是交互终端；请提供场次名，例如 retest-01。\n' >&2
+          exit 2
+        fi
+      elif [[ -e "$field_dir" ]]; then
+        if [[ -t 0 ]]; then
+          prompt_new_map_field "场次 ${field} 已存在，请输入新的场次名：" || exit 1
+        else
+          printf '场次已存在，请使用新的场次名。\n' >&2
+          exit 1
+        fi
+      fi
+    fi
     if [[ "$action" == ready ]]; then
       if [[ -z "$field" ]]; then
         [[ -t 0 ]] || { printf '未指定场次名，且当前不是交互终端；请提供场次名或执行 maps 查看可用地图。\n' >&2; exit 2; }
@@ -459,6 +603,8 @@ case "$action" in
     printf '%s 已启动（场次：%s）。实时日志：docker logs -f %s\n' "$phase" "$field" "$container"
     if [[ "$phase" == navigation ]]; then
       printf '后续执行 status / go / stop 可直接省略场次名（或先 export FIELD=%s）。\n' "$field"
+    elif [[ "$phase" == mapping ]]; then
+      printf '后续执行 rviz / status / save / stop 可直接省略场次名（或先 export FIELD=%s）。\n' "$field"
     fi
     ;;
   rviz)

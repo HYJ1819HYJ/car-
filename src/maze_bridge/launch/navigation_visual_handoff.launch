@@ -20,15 +20,18 @@
   <arg name="cruise_max_turn" value="$(eval min(0.60, float(arg('max_turn'))))"/>
   <arg name="approach_max_speed" default="0.35"/>
   <arg name="approach_max_turn" default="0.40"/>
+  <arg name="approach_slowdown_distance" default="2.20"/>
+  <arg name="approach_full_slow_distance" default="1.35"/>
   <arg name="allow_controlled_reverse" default="true"/>
   <arg name="fallback_hfov_deg" default="75.0"/>
+  <arg name="camera_pitch_offset" default="-0.056"/>
   <arg name="visual_max_speed" default="0.30"/>
   <arg name="visual_max_turn" default="0.50"/>
   <arg name="stop_ratio" default="0.16"/>
   <arg name="facing_tolerance_deg" default="5.0"/>
   <arg name="safety_stop_distance" default="0.12"/>
   <arg name="clear_scans" default="3"/>
-  <arg name="max_handoff_distance" default="1.30"/>
+  <arg name="max_handoff_distance" default="1.50"/>
   <arg name="max_handoff_lateral" default="0.38"/>
   <arg name="max_handoff_yaw_rad" default="0.40"/>
   <arg name="entrance_max_handoff_lateral" default="0.75"/>
@@ -40,8 +43,9 @@
   <arg name="gimbal_max_skew" default="0.55"/>
   <arg name="gimbal_yaw_feedforward_sec" default="0.12"/>
   <arg name="gimbal_max_yaw_feedforward_px" default="120.0"/>
-  <arg name="gimbal_avoid_status_tx_window" default="true"/>
-  <arg name="gimbal_status_period_est_sec" default="0.516"/>
+  <arg name="gimbal_avoid_status_tx_window" default="false"/>
+  <arg name="gimbal_status_period_est_sec" default="0.100"/>
+  <arg name="gimbal_turn_search_bias_enabled" default="true"/>
   <arg name="gimbal_require_status_checksum" default="false"/>
   <arg name="gimbal_tilt_min_deg" default="-25.0"/>
   <arg name="gimbal_tilt_max_deg" default="0.0"/>
@@ -78,6 +82,8 @@
     <arg name="gimbal_max_yaw_feedforward_px" value="$(arg gimbal_max_yaw_feedforward_px)"/>
     <arg name="gimbal_avoid_status_tx_window" value="$(arg gimbal_avoid_status_tx_window)"/>
     <arg name="gimbal_status_period_est_sec" value="$(arg gimbal_status_period_est_sec)"/>
+    <arg name="camera_pitch" value="$(arg camera_pitch_offset)"/>
+    <arg name="gimbal_turn_search_bias_enabled" value="$(arg gimbal_turn_search_bias_enabled)"/>
     <arg name="gimbal_require_status_checksum" value="$(arg gimbal_require_status_checksum)"/>
     <arg name="gimbal_pan_to_ros_sign" value="-1.0"/>
     <arg name="gimbal_tilt_min_deg" value="$(arg gimbal_tilt_min_deg)"/>
@@ -112,6 +118,7 @@
     <param name="origin_start_x" value="$(arg initial_pose_x)"/>
     <param name="origin_start_y" value="$(arg initial_pose_y)"/>
     <param name="fallback_hfov_deg" value="$(arg fallback_hfov_deg)"/>
+    <param name="camera_pitch_offset" value="$(arg camera_pitch_offset)"/>
     <param name="min_pixel_height" value="11"/>
     <param name="camera_z" value="0.42"/>
     <param name="min_target_z" value="0.02"/>
@@ -152,6 +159,7 @@
     <param name="metric_stop_depth_min" value="0.48"/>
     <param name="metric_stop_depth_max" value="0.63"/>
     <param name="fallback_hfov_deg" value="$(arg fallback_hfov_deg)"/>
+    <param name="camera_pitch_offset" value="$(arg camera_pitch_offset)"/>
     <param name="facing_tolerance_deg" value="$(arg facing_tolerance_deg)"/>
   </node>
 
@@ -160,6 +168,7 @@
     <param name="auto_start" value="$(arg auto_start)"/>
     <param name="competition_mode" value="true"/>
     <param name="fallback_hfov_deg" value="$(arg fallback_hfov_deg)"/>
+    <param name="camera_pitch_offset" value="$(arg camera_pitch_offset)"/>
     <param name="max_handoff_distance" value="$(arg max_handoff_distance)"/>
     <param name="max_handoff_lateral" value="$(arg max_handoff_lateral)"/>
     <param name="max_handoff_yaw_rad" value="$(arg max_handoff_yaw_rad)"/>
@@ -167,6 +176,10 @@
     <param name="entrance_max_handoff_yaw_rad" value="$(arg entrance_max_handoff_yaw_rad)"/>
     <param name="approach_max_speed" value="$(arg approach_max_speed)"/>
     <param name="approach_max_turn" value="$(arg approach_max_turn)"/>
+    <param name="cruise_max_speed" value="$(arg cruise_max_speed)"/>
+    <param name="cruise_max_turn" value="$(arg cruise_max_turn)"/>
+    <param name="approach_slowdown_distance" value="$(arg approach_slowdown_distance)"/>
+    <param name="approach_full_slow_distance" value="$(arg approach_full_slow_distance)"/>
     <param name="required_clear_scans" value="$(arg clear_scans)"/>
     <param name="max_target_range" value="$(arg max_target_range)"/>
     <param name="range_absolute_tolerance" value="$(arg range_absolute_tolerance)"/>

@@ -15,6 +15,20 @@ TEST(GimbalYawFeedforward, PredictsImageMotionBeforeMirroringAndClampsToFrame) {
   EXPECT_DOUBLE_EQ(applyYawFeedforwardPx(320,400,.5,0,120,640),320);
 }
 
+TEST(GimbalSearchDirection, FavorsInsideOfTurnOnlyWhileSearching) {
+  using stm32_bridge::desiredSearchDirectionForTurn;
+  EXPECT_EQ(desiredSearchDirectionForTurn(true, true, -.22, 12.0, 1.0), -1);
+  EXPECT_EQ(desiredSearchDirectionForTurn(true, true, -.22, 12.0, -1.0), 1);
+  EXPECT_EQ(desiredSearchDirectionForTurn(true, true, .22, -12.0, 1.0), 1);
+  EXPECT_EQ(desiredSearchDirectionForTurn(true, true, .22, -12.0, -1.0), -1);
+  EXPECT_EQ(desiredSearchDirectionForTurn(true, true, .0, -20.0, -1.0), 0);
+  EXPECT_EQ(desiredSearchDirectionForTurn(true, true, -.21, 20.0, -1.0), 0);
+  EXPECT_EQ(desiredSearchDirectionForTurn(true, true, -.50, 11.9, -1.0), 0);
+  EXPECT_EQ(desiredSearchDirectionForTurn(true, true, -.50, -20.0, -1.0), 0);
+  EXPECT_EQ(desiredSearchDirectionForTurn(true, false, -.50, 20.0, -1.0), 0);
+  EXPECT_EQ(desiredSearchDirectionForTurn(false, true, -.50, 20.0, -1.0), 0);
+}
+
 using stm32_bridge::GimbalStartup;
 using stm32_bridge::GimbalStatus;
 using stm32_bridge::GimbalStatusParser;

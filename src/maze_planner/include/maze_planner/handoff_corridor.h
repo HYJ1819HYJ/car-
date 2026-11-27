@@ -10,6 +10,23 @@
 
 namespace maze_planner {
 
+inline void approachVelocityLimits(double target_distance,
+                                   double slowdown_distance, double full_slow_distance,
+                                   double cruise_v, double cruise_w,
+                                   double approach_v, double approach_w,
+                                   double* max_v, double* max_w) {
+  *max_v = approach_v;
+  *max_w = approach_w;
+  if (!std::isfinite(target_distance) || !std::isfinite(slowdown_distance) ||
+      !std::isfinite(full_slow_distance) || slowdown_distance <= 0.0 ||
+      slowdown_distance <= full_slow_distance ||
+      target_distance <= std::max(0.0, full_slow_distance)) return;
+  const double alpha = std::min(1.0, (target_distance - full_slow_distance) /
+                                     (slowdown_distance - full_slow_distance));
+  *max_v += alpha * std::max(0.0, cruise_v - approach_v);
+  *max_w += alpha * std::max(0.0, cruise_w - approach_w);
+}
+
 struct HandoffCorridorParameters {
   double laser_x{0.315};
   double laser_y{0.0};

@@ -28,6 +28,8 @@ constexpr uint8_t kCommandDisable = 0x00;
 constexpr uint8_t kCommandEnable = 0x01;
 constexpr uint8_t kCommandCenter = 0x02;
 constexpr uint8_t kCommandStatus = 0x03;
+constexpr uint8_t kCommandSearchDirPos = 0x04;
+constexpr uint8_t kCommandSearchDirNeg = 0x05;
 constexpr uint16_t kFirmwareWidth = 640;
 constexpr uint16_t kFirmwareHeight = 480;
 
@@ -76,6 +78,7 @@ class GimbalBridgeNode {
     pnh_.param("max_yaw_feedforward_px", max_yaw_feedforward_px_, 120.0);
     pnh_.param("avoid_status_tx_window", avoid_status_tx_window_, true);
     pnh_.param("status_period_est_sec", status_period_est_sec_, .516);
+    pnh_.param("turn_search_bias_enabled", turn_search_bias_enabled_, true);
     yaw_feedforward_sec_ = std::max(0.0, yaw_feedforward_sec_);
     max_yaw_feedforward_px_ = std::max(0.0, max_yaw_feedforward_px_);
     status_period_est_sec_ = std::max(.05, status_period_est_sec_);
@@ -225,6 +228,11 @@ class GimbalBridgeNode {
     last_odom_time_ = ros::Time::now();
   }
 
+  double freshOdomYawRate(const ros::Time& now) const {
+    const double age = (now - last_odom_time_).toSec();
+    return !last_odom_time_.isZero() && age >= 0.0 && age <= .30 ? odom_wz_ : 0.0;
+  }
+
   void transmitObservation() {
     if (!serial_.isOpen()) return;
     const ros::Time now = ros::Time::now();
@@ -246,9 +254,7 @@ class GimbalBridgeNode {
     if (has_observation) {
       const double hfov_rad = degToRad(fallback_hfov_deg_);
       const double focal_px = latest_observation_.image_width / (2.0 * std::tan(0.5 * hfov_rad));
-      const double odom_age = (now - last_odom_time_).toSec();
-      const double wz = !last_odom_time_.isZero() && odom_age >= 0.0 && odom_age <= .30
-          ? odom_wz_ : 0.0;
+      const double wz = freshOdomYawRate(now);
       double source_x = stm32_bridge::applyYawFeedforwardPx(
           latest_observation_.center_x, focal_px, wz, yaw_feedforward_sec_,
           max_yaw_feedforward_px_, latest_observation_.image_width);
@@ -406,6 +412,20 @@ class GimbalBridgeNode {
           (now - last_control_command_).toSec() >= 0.2) {
         sendCommand(kCommandStatus);
         last_status_request_ = now;
+      } else if (turn_search_bias_enabled_ && status_age >= 0.0 && status_age <= .6 &&
+                 servo_ready_ && gimbal_enabled_ && !target_locked_ &&
+                 (now - last_search_bias_).toSec() >= .8 &&
+                 (now - last_control_command_).toSec() >= .2 &&
+                 (now - last_status_request_).toSec() >= .2 &&
+                 (!avoid_status_tx_window_ ||
+                  std::abs(status_age - status_period_est_sec_) > .025)) {
+        const int direction = stm32_bridge::desiredSearchDirectionForTurn(
+            autonomy_enabled_, searching_, freshOdomYawRate(now),
+            pan_to_ros_sign_ * pan_deg_, pan_to_ros_sign_);
+        if (direction != 0) {
+          sendCommand(direction > 0 ? kCommandSearchDirPos : kCommandSearchDirNeg);
+          last_search_bias_ = now;
+        }
       }
       transmitObservation();
       publishCameraTf();
@@ -427,7 +447,7 @@ class GimbalBridgeNode {
   ros::Timer timer_;
   tf2_ros::TransformBroadcaster tf_broadcaster_;
   serial::Serial serial_;
-  ros::Time last_control_command_;
+  ros::Time last_control_command_, last_search_bias_;
 
   std::string port_;
   int baud_{115200};
@@ -452,6 +472,7 @@ class GimbalBridgeNode {
   double yaw_feedforward_sec_{.12}, max_yaw_feedforward_px_{120.0}, odom_wz_{0.0};
   double status_period_est_sec_{.516};
   bool avoid_status_tx_window_{true}, have_status_{false};
+  bool turn_search_bias_enabled_{true};
   ros::Time last_odom_time_;
 
   bool connected_{false};

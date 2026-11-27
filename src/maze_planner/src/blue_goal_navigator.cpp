@@ -103,6 +103,7 @@ class BlueGoalNavigator {
     pnh_.param<double>("camera_y", camera_y_, 0.0);
     pnh_.param<double>("paper_height", paper_height_, 0.297);
     pnh_.param<double>("fallback_hfov_deg", fallback_hfov_deg_, 70.0);
+    pnh_.param<double>("camera_pitch_offset", camera_pitch_offset_, 0.0);
     pnh_.param<double>("min_pixel_height", min_pixel_height_, 18.0);
     pnh_.param<double>("min_target_range", min_target_range_, 0.45);
     pnh_.param<double>("max_target_range", max_target_range_, 8.0);
@@ -364,7 +365,8 @@ class BlueGoalNavigator {
     const bool fresh_gimbal = (ros::Time::now() - last_joint_time_).toSec() <= 1.5;
     const double pan = fresh_gimbal ? pan_angle_ : 0.0;
     const double tilt = fresh_gimbal ? tilt_angle_ : 0.0;
-    return maze_planner::visualBearing(pan, tilt, observation.center_x,
+    const double optical_tilt = tilt + camera_pitch_offset_;
+    return maze_planner::visualBearing(pan, optical_tilt, observation.center_x,
                                       observation.center_y, cx, cy, fx, fy, bearing);
   }
 
@@ -729,12 +731,13 @@ class BlueGoalNavigator {
     }
     const double pixel_bearing = std::atan2(cx - observation.center_x, fx);
     const double pixel_down_angle = std::atan2(observation.center_y - cy, fy);
+    const double optical_tilt = tilt + camera_pitch_offset_;
     double bearing = pan + pixel_bearing;
     if (competition_mode_ &&
-        !maze_planner::visualBearing(pan, tilt, observation.center_x,
+        !maze_planner::visualBearing(pan, optical_tilt, observation.center_x,
                                      observation.center_y, cx, cy, fx, fy, &bearing))
       return false;
-    const double down_angle = tilt + pixel_down_angle;
+    const double down_angle = optical_tilt + pixel_down_angle;
     if (competition_mode_ && !maze_planner::plausibleTargetHeight(
             camera_z_, slant_range, down_angle, min_target_z_, max_target_z_)) return false;
     const double horizontal_range = slant_range * std::cos(down_angle);
@@ -1853,6 +1856,7 @@ class BlueGoalNavigator {
   double gimbal_max_skew_{0.55}, planner_collision_padding_{0.025};
   double paper_height_{0.297};
   double fallback_hfov_deg_{70.0};
+  double camera_pitch_offset_{0.0};
   double min_pixel_height_{18.0};
   double min_target_range_{0.45};
   double max_target_range_{8.0};

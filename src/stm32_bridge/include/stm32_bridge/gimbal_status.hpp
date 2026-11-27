@@ -16,6 +16,18 @@ inline double applyYawFeedforwardPx(double center_x, double fx, double yaw_rate,
   return std::max(0.0, std::min(static_cast<double>(width - 1), center_x + offset));
 }
 
+inline int desiredSearchDirectionForTurn(bool autonomy_enabled, bool searching,
+                                         double odom_wz, double pan_ros_deg,
+                                         double pan_to_ros_sign) {
+  if (!autonomy_enabled || !searching || !std::isfinite(odom_wz) ||
+      !std::isfinite(pan_ros_deg) || !std::isfinite(pan_to_ros_sign) ||
+      pan_to_ros_sign == 0.0) return 0;
+  const int servo_left = pan_to_ros_sign < 0.0 ? -1 : 1;
+  if (odom_wz <= -.22 && pan_ros_deg >= 12.0) return -servo_left;
+  if (odom_wz >= .22 && pan_ros_deg <= -12.0) return servo_left;
+  return 0;
+}
+
 struct GimbalStatus {
   bool enabled, ready, locked, searching;
   double pan_deg, tilt_deg;

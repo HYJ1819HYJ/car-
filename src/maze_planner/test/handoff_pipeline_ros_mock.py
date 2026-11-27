@@ -205,6 +205,8 @@ class Simulation:
         self.default_tilt_deg = (rospy.get_param("/gimbal_bridge/default_tilt_deg") *
                                  rospy.get_param("/gimbal_bridge/tilt_to_ros_sign"))
         self.prestart_tilt = math.radians(self.default_tilt_deg)
+        self.camera_pitch_offset = rospy.get_param("/gimbal_bridge/camera_pitch_offset", 0.0)
+        self.handoff_limit = rospy.get_param("/visual_handoff_manager/max_handoff_distance")
         self.false_stage = ""
         self.ghost_after_cooldown = False
         self.false_release_time = None
@@ -448,7 +450,9 @@ class Simulation:
         obs.image_width, obs.image_height = 640, 480
         obs.center_x = 320 - self.focal_px * math.tan(bearing - pan) if visible else 320
         down = math.atan2(.42 - .2985, distance)
-        obs.center_y = 240 + self.focal_px * math.tan(down - self.prestart_tilt)
+        # JointState carries the mechanical angle; lens projection uses the optical angle.
+        optical_tilt = self.prestart_tilt + self.camera_pitch_offset
+        obs.center_y = 240 + self.focal_px * math.tan(down - optical_tilt)
         estimated_distance = distance
         if self.field.name == WALL_ANCHOR_FIELD and x < 4.25:
             estimated_distance -= .75
@@ -736,7 +740,8 @@ class Simulation:
         assert all(label in self.phases for label in expected)
         assert [self.phases.index(label) for label in expected] == sorted(
             self.phases.index(label) for label in expected)
-        assert handoff_distance is not None and handoff_distance <= 1.34
+        # Ground-truth range can differ from the fitted wall range by a few centimeters.
+        assert handoff_distance is not None and handoff_distance <= self.handoff_limit + .04
         if name == "corner":
             assert self.phases.count("TERMINAL_PARK") == 1, "corner handoff bounced back to navigation"
             assert not any("BLOCKED" in event for event, _ in self.terminal_events)

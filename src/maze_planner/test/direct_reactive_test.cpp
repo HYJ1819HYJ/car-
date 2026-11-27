@@ -54,6 +54,28 @@ TEST(DirectReactive, AvoidsCloserObstacleButApproachesTheTargetWall) {
   EXPECT_GT(command.v, 0.0);  // Existing serial bridge enforces the 12 cm stop.
 }
 
+TEST(DirectReactive, KeepsFinalYawAlignmentUntilLowerThreshold) {
+  maze_planner::ReactiveParameters p;
+  p.terminal_only = true;
+  auto input = visible(0.0, .06);
+  input.wall_valid = true;
+  const auto set_yaw = [&](double degrees) {
+    const double yaw = degrees * M_PI / 180.0;
+    input.wall_outward = {-std::cos(yaw), -std::sin(yaw)};
+    input.wall_marker = -.64 * input.wall_outward;
+  };
+  set_yaw(9.0);
+  EXPECT_STREQ(maze_planner::reactiveVisualCommand(input, p, 0, 1, false).state, "ALIGN");
+  set_yaw(6.0);
+  const auto aligning = maze_planner::reactiveVisualCommand(input, p, 0, 1, true);
+  EXPECT_STREQ(aligning.state, "ALIGN");
+  EXPECT_DOUBLE_EQ(aligning.v, 0.0);
+  EXPECT_GT(aligning.w, 0.0);
+  EXPECT_STREQ(maze_planner::reactiveVisualCommand(input, p, 0, 1, false).state, "APPROACH");
+  set_yaw(4.0);
+  EXPECT_STREQ(maze_planner::reactiveVisualCommand(input, p, 0, 1, true).state, "APPROACH");
+}
+
 TEST(DirectReactive, SearchesWhenTheTargetIsAbsent) {
   maze_planner::ReactiveParameters p;
   maze_planner::ReactiveInput input;

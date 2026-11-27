@@ -73,6 +73,22 @@ TEST(CorridorExplorer, VisitsTheOtherSideOfTheForkAndClearsVisitsOnReset) {
   EXPECT_LT(maze_planner::norm(first - next_round), .05);
 }
 
+TEST(CorridorExplorer, CentersFrontierInWideCorridorWithOffCenterStart) {
+  auto map = room();
+  for (int y = 22; y < 78; ++y)
+    for (int x = 8; x < 142; ++x)
+      map.data[y * map.info.width + x] = 0;
+  const maze_planner::CorridorGrid grid(map);
+  maze_planner::CorridorExplorer explorer;
+  const maze_planner::Point2 start(1.5, 3.25);
+  explorer.reset(start);
+  maze_planner::Point2 goal;
+  double yaw = 0.0;
+  ASSERT_TRUE(explorer.select(grid, start, &goal, &yaw));
+  EXPECT_GT(goal.x, 5.3);
+  EXPECT_LT(std::abs(goal.y - 2.50), .25);
+}
+
 TEST(FinishEntrance, AllowsCornerWithSoftInflationAndRejectsLethalFootprintCells) {
   auto map = room();
   for (int y = 37; y < 45; ++y)

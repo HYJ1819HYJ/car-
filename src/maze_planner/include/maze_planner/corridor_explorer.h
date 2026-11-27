@@ -151,7 +151,10 @@ class CorridorExplorer {
                       [&](const Point2& v) { return norm(p - v) <= 1.4; })) continue;
       const bool tracked = std::any_of(track_.begin(), track_.end(),
                       [&](const Point2& v) { return norm(p - v) < .4; });
-      const double candidate = depth + 1.6 * std::min(clearance_m, 1.0) -
+      // Preserve narrow junction ordering and give wide corridors a stronger
+      // centerline preference once clearance exceeds the former 1 m cap.
+      const double clearance_score = 1.6 * clearance_m + .9 * std::max(0.0, clearance_m - 1.0);
+      const double candidate = depth + clearance_score -
                                .15 * from_robot[i] - (tracked ? .20 : 0.0);
       if (candidate <= score || !grid.clear(p, .38, 95)) continue;
       const double heading = arrivalHeading(grid, from_robot, i);

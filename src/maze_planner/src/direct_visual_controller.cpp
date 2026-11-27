@@ -35,6 +35,7 @@ class DirectVisualController {
     pnh_.param<double>("lookahead_time", params_.lookahead_time, 2.0);
     pnh_.param<double>("paper_height", paper_height_, 0.297);
     pnh_.param<double>("fallback_hfov_deg", fallback_hfov_deg_, 88.0);
+    pnh_.param<double>("camera_pitch_offset", camera_pitch_offset_, 0.0);
     pnh_.param<double>("camera_x", camera_x_, 0.145);
     pnh_.param<double>("laser_x", laser_x_, 0.315);
     pnh_.param<double>("laser_y", laser_y_, 0.0);
@@ -108,6 +109,7 @@ class DirectVisualController {
     cached_wall_time_ = ros::Time();
     search_start_ = ros::Time();
     complete_ = false;
+    aligning_ = false;
     avoid_side_ = 0;
     publishCommand(0.0, 0.0);
     publishGoal(false);
@@ -188,10 +190,11 @@ class DirectVisualController {
     double pan = 0.0, tilt = 0.0;
     if (require_gimbal_ && !gimbal_history_.angles(observation_.header.stamp, &pan, &tilt, gimbal_max_skew_))
       return false;
-    if (!maze_planner::visualBearing(pan, tilt, observation_.center_x,
+    const double optical_tilt = tilt + camera_pitch_offset_;
+    if (!maze_planner::visualBearing(pan, optical_tilt, observation_.center_x,
                                       observation_.center_y, cx, cy, fx, fy, bearing))
       return false;
-    const double down = tilt + std::atan2(observation_.center_y-cy, fy);
+    const double down = optical_tilt + std::atan2(observation_.center_y-cy, fy);
     const double horizontal_range = fy*paper_height_/observation_.pixel_height*std::cos(down);
     if (!std::isfinite(horizontal_range) || horizontal_range <= 0.0) return false;
     *visual_range = horizontal_range;
@@ -243,6 +246,7 @@ class DirectVisualController {
         (require_gimbal_ && (!gimbal_connected_ || !gimbal_ready_ ||
                              (now-joint_received_).toSec() > joint_timeout_))) {
       publishCommand(0.0, 0.0);
+      aligning_ = false;
       publishState("WAIT: lidar or gimbal data unavailable");
       return;
     }
@@ -266,6 +270,7 @@ class DirectVisualController {
       search_side_ = input.bearing < 0.0 ? -1 : 1;
       search_start_ = ros::Time();
     } else {
+      aligning_ = false;
       if (search_start_.isZero()) {
         search_start_ = now;
         search_center_yaw_ = yaw_;
@@ -288,7 +293,9 @@ class DirectVisualController {
       publishState("SEARCH: gimbal-first bounded sweep");
       return;
     }
-    const auto command = maze_planner::reactiveVisualCommand(input, params_, avoid_side_, search_side_);
+    const auto command = maze_planner::reactiveVisualCommand(
+        input, params_, avoid_side_, search_side_, aligning_);
+    aligning_ = std::string(command.state) == "ALIGN";
     avoid_side_ = command.avoid_side;
     if (command.complete) {
       publishCommand(0.0, 0.0);
@@ -312,10 +319,12 @@ class DirectVisualController {
   stm32_bridge::BlueTargetObservation observation_;
   sensor_msgs::CameraInfo camera_info_;
   ros::Time observation_received_, scan_received_, joint_received_;
+  bool aligning_{false};
   bool enabled_{false}, complete_{false}, require_gimbal_{true};
   bool have_observation_{false}, have_scan_{false}, have_camera_info_{false};
   bool gimbal_connected_{false}, gimbal_ready_{false};
   double paper_height_{0.297}, fallback_hfov_deg_{88.0};
+  double camera_pitch_offset_{0.0};
   double camera_x_{0.145}, laser_x_{0.315}, laser_y_{0.0}, laser_yaw_{0.0};
   double scan_timeout_{0.5}, observation_timeout_{0.5}, joint_timeout_{1.5};
   double front_clearance_{std::numeric_limits<double>::infinity()};

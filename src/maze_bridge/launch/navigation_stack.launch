@@ -110,8 +110,9 @@
   <arg name="fallback_hfov_deg" default="70.0"/>
   <arg name="gimbal_yaw_feedforward_sec" default="0.12"/>
   <arg name="gimbal_max_yaw_feedforward_px" default="120.0"/>
-  <arg name="gimbal_avoid_status_tx_window" default="true"/>
-  <arg name="gimbal_status_period_est_sec" default="0.516"/>
+  <arg name="gimbal_avoid_status_tx_window" default="false"/>
+  <arg name="gimbal_status_period_est_sec" default="0.100"/>
+  <arg name="gimbal_turn_search_bias_enabled" default="true"/>
   <!-- 远距离蓝色 A4 检测：同时要求连续色块尺寸、A4近似长宽比和填充率。 -->
   <arg name="blue_ratio_threshold" default="0.0003"/>
   <arg name="blue_contour_ratio" default="0.00025"/>
@@ -306,6 +307,7 @@
     <param name="max_yaw_feedforward_px" value="$(arg gimbal_max_yaw_feedforward_px)"/>
     <param name="avoid_status_tx_window" value="$(arg gimbal_avoid_status_tx_window)"/>
     <param name="status_period_est_sec" value="$(arg gimbal_status_period_est_sec)"/>
+    <param name="turn_search_bias_enabled" value="$(arg gimbal_turn_search_bias_enabled)"/>
   </node>
 
   <!-- ============ 3. 建图与导航层 ============ -->

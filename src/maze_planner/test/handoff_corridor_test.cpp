@@ -90,6 +90,26 @@ TEST(HandoffCorridor, MissingRaysAreNotCountedAsClear) {
   EXPECT_NE(reason.find("not observed"), std::string::npos);
 }
 
+TEST(ApproachVelocityLimits, InterpolatesAndFallsBackToNearSpeed) {
+  const auto expect_limits = [](double distance, double expected_v, double expected_w,
+                                double slowdown_distance = 2.20) {
+    SCOPED_TRACE(distance);
+    double max_v, max_w;
+    maze_planner::approachVelocityLimits(distance, slowdown_distance, 1.35,
+                                         .60, .60, .35, .40, &max_v, &max_w);
+    EXPECT_DOUBLE_EQ(max_v, expected_v);
+    EXPECT_DOUBLE_EQ(max_w, expected_w);
+  };
+  expect_limits(4.5, .60, .60);
+  expect_limits(2.20, .60, .60);
+  expect_limits((2.20 + 1.35) / 2.0, .475, .50);
+  expect_limits(1.35, .35, .40);
+  expect_limits(.80, .35, .40);
+  expect_limits(0.0, .35, .40);
+  expect_limits(std::numeric_limits<double>::quiet_NaN(), .35, .40);
+  expect_limits(4.5, .35, .40, 0.0);
+}
+
 int main(int argc, char** argv) {
   testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();

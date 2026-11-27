@@ -133,7 +133,8 @@ inline double wallAlignedSteeringBearing(const ReactiveInput& input,
 inline ReactiveCommand reactiveVisualCommand(const ReactiveInput& input,
                                              const ReactiveParameters& p,
                                              int previous_avoid_side,
-                                             int search_side) {
+                                             int search_side,
+                                             bool previously_aligning = false) {
   ReactiveCommand result;
   if (!input.target_visible && !input.wall_valid) {
     result.state = "SEARCH";
@@ -163,9 +164,12 @@ inline ReactiveCommand reactiveVisualCommand(const ReactiveInput& input,
                             input.contour_ratio + 1e-7 >= p.stop_ratio;
   const double wall_depth = -dot(input.wall_marker, input.wall_outward);
   const double normal_yaw = parkingYaw({input.wall_marker, input.wall_outward});
+  const double yaw_threshold = (previously_aligning ? 4.0 : 8.0) * M_PI / 180.0;
   const bool final_yaw_align = input.wall_valid && wall_depth <= .65 &&
-      std::abs(normal_yaw) > 8.0 * M_PI / 180.0;
-  if (visual_align || final_yaw_align || std::fabs(steer_bearing) >= p.turn_before_drive) {
+      std::abs(normal_yaw) > yaw_threshold;
+  const double steer_threshold = previously_aligning ? .65 * p.turn_before_drive : p.turn_before_drive;
+  const bool steer_align = std::fabs(steer_bearing) >= steer_threshold;
+  if (visual_align || final_yaw_align || steer_align) {
     result.state = "ALIGN";
     const double align_target =
         final_yaw_align ? normal_yaw : (visual_align ? input.bearing : steer_bearing);
@@ -185,7 +189,7 @@ inline ReactiveCommand reactiveVisualCommand(const ReactiveInput& input,
     return result;
   }
   if (input.wall_valid)
-    drive_speed = std::min(drive_speed, std::max(.04, (wall_depth - p.metric_stop_depth_min) * .8));
+    drive_speed = std::min(drive_speed, std::max(.06, (wall_depth - p.metric_stop_depth_min) * 1.1));
 
   // A nearby return is a bypass obstacle when it is clearly in front of the
   // estimated paper plane. The paper's own wall remains the approach target.
